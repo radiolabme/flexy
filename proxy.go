@@ -298,6 +298,13 @@ func startDiscoveryRelay(ctx context.Context, proxyIP string) {
 // udpPortRe matches FlexRadio "client udpport N" commands in the TCP stream.
 var udpPortRe = regexp.MustCompile(`^(C\d+\|client udpport )(\d+)\s*$`)
 
+// regexes for tracking client-owned pans and slices for cleanup on disconnect.
+var (
+	proxyHandleRe    = regexp.MustCompile(`^H([0-9A-Fa-f]+)$`)
+	proxyPanOwnerRe  = regexp.MustCompile(`\|display pan (0x[0-9A-Fa-f]+) .*client_handle=0x([0-9A-Fa-f]+)`)
+	proxySliceOwnerRe = regexp.MustCompile(`\|slice (\d+) .*client_handle=0x([0-9A-Fa-f]+)`)
+)
+
 // startUDPRelay opens a local UDP port bound to bindIP (nil = all interfaces),
 // forwards received packets to destIP:destPort, and closes when done is closed.
 // Returns the local port, a packet counter, and any error.
@@ -391,6 +398,29 @@ func handleSmartSDRClient(clientConn net.Conn) {
 	done := make(chan struct{})
 	defer close(done)
 
+	// Track client-owned pans and slices so we can remove them on disconnect.
+	// This forces SmartSDR to do a full re-init (including client udpport) on
+	// the next connection instead of silently restoring a stale session.
+	var myHandle string
+	ownedPans := map[string]struct{}{}
+	ownedSlices := map[string]struct{}{}
+	defer func() {
+		if myHandle == "" || (len(ownedPans) == 0 && len(ownedSlices) == 0) {
+			return
+		}
+		log.Info().Str("ctx", "proxy").Str("handle", myHandle).
+			Int("pans", len(ownedPans)).Int("slices", len(ownedSlices)).
+			Msg("Proxy cleanup: removing client pans and slices on disconnect")
+		_ = radioConn.SetWriteDeadline(time.Now().Add(2 * time.Second))
+		for pan := range ownedPans {
+			fmt.Fprintf(radioConn, "display pan remove %s\n", pan)
+		}
+		for slice := range ownedSlices {
+			fmt.Fprintf(radioConn, "slice remove %s\n", slice)
+		}
+		_ = radioConn.SetWriteDeadline(time.Time{})
+	}()
+
 	// client → radio: scan line by line, intercept udpport commands.
 	go func() {
 		scanner := bufio.NewScanner(clientConn)
@@ -431,6 +461,20 @@ func handleSmartSDRClient(clientConn net.Conn) {
 		line := radioScanner.Text()
 		if proxyIPStr != "" && cfg.RadioIP != "" {
 			line = strings.ReplaceAll(line, "ip="+cfg.RadioIP, "ip="+proxyIPStr)
+		}
+		// Track handle and owned pans/slices for cleanup on disconnect.
+		if myHandle == "" {
+			if m := proxyHandleRe.FindStringSubmatch(line); m != nil {
+				myHandle = strings.ToUpper(m[1])
+			}
+		}
+		if myHandle != "" {
+			if m := proxyPanOwnerRe.FindStringSubmatch(line); m != nil && strings.EqualFold(m[2], myHandle) {
+				ownedPans[m[1]] = struct{}{}
+			}
+			if m := proxySliceOwnerRe.FindStringSubmatch(line); m != nil && strings.EqualFold(m[2], myHandle) {
+				ownedSlices[m[1]] = struct{}{}
+			}
 		}
 		log.Debug().Str("ctx", "proxy").Str("proto", "TCP").Str("dir", "←").Str("line", line).Msg("proxy resp")
 		if _, err := fmt.Fprintf(clientConn, "%s\n", line); err != nil {
