@@ -1,0 +1,353 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"flag"
+	"os"
+	"os/signal"
+	"strings"
+	"sync"
+	"syscall"
+	"time"
+
+	"github.com/kc2g-flex-tools/flexclient"
+	"github.com/rs/zerolog"
+	log "github.com/rs/zerolog/log"
+)
+
+type Config struct {
+	RadioIP          string
+	Station          string
+	Slice            string
+	Headless         bool
+	SliceCreateParms string
+	Listen           string
+	WebListen        string
+	ProxyListen      string
+	ProxyIP          string
+	RadioBindIP      string
+	Profile          string
+	LogLevel         string
+	ChkVFOMode       string
+	Metering         bool
+	UDPPort          int
+}
+
+var cfg Config
+
+func init() {
+	flag.StringVar(&cfg.RadioIP, "radio", ":discover:", "radio IP address or discovery spec")
+	flag.IntVar(&cfg.UDPPort, "udp-port", 0, "udp port to listen for VITA packets (0: random free port)")
+	flag.StringVar(&cfg.Station, "station", "Flex", "station name to bind to or create")
+	flag.StringVar(&cfg.Slice, "slice", "A", "slice letter to control")
+	flag.BoolVar(&cfg.Headless, "headless", false, "run in headless mode")
+	flag.StringVar(&cfg.Listen, "listen", ":4532", "hamlib listen [address]:port")
+	flag.StringVar(&cfg.WebListen, "web", "", "web UI listen [address]:port (disabled if empty)")
+	flag.StringVar(&cfg.ProxyListen, "proxy", "", "SmartSDR proxy listen [address]:port (disabled if empty)")
+	flag.StringVar(&cfg.ProxyIP, "proxy-ip", "", "IP to advertise in discovery (auto-detected if empty)")
+	flag.StringVar(&cfg.RadioBindIP, "radio-bind-ip", "", "local IP to bind when connecting to radio (for Tailscale/VPN; auto if empty)")
+	flag.StringVar(&cfg.Profile, "profile", "", "global profile to load on startup for -headless mode")
+	flag.StringVar(&cfg.LogLevel, "log-level", "info", "minimum level of messages to log to console")
+	flag.StringVar(&cfg.ChkVFOMode, "chkvfo-mode", "new", "chkvfo syntax (old,new)")
+	flag.BoolVar(&cfg.Metering, "metering", true, "support reading meters from radio")
+}
+
+var fc *flexclient.FlexClient
+var hamlib *HamlibServer = NewHamlibServer()
+var ClientID string
+var ClientUUID string
+var SliceIdx string
+
+// reconnectCh is signaled by the web UI to trigger a graceful reconnect.
+var reconnectCh = make(chan struct{}, 1)
+
+func createClient(ctx context.Context) error {
+	log.Info().Str("ctx", "flexy").Str("proto", "TCP").Msg("Registering client")
+	ClientID = "0x" + fc.ClientID()
+
+	if _, err := fc.SendAndWaitContext(ctx, "client program Hamlib-Flex"); err != nil {
+		return err
+	}
+	if _, err := fc.SendAndWaitContext(ctx, "client station "+strings.ReplaceAll(cfg.Station, " ", "\x7f")); err != nil {
+		return err
+	}
+
+	log.Info().Str("ctx", "flexy").Str("proto", "TCP").Str("handle", ClientID).Msg("Got client handle")
+
+	if cfg.Profile != "" {
+		res, err := fc.SendAndWaitContext(ctx, "profile global load "+cfg.Profile)
+		if err != nil {
+			return err
+		}
+		if res.Error != 0 {
+			log.Printf("Profile load failed: %08X (typo?)", res.Error)
+		} else {
+			log.Printf("Loaded profile %s", cfg.Profile)
+		}
+	}
+	return nil
+}
+
+func bindClient(ctx context.Context) error {
+	log.Info().Str("station", cfg.Station).Msg("Waiting for station")
+
+	clients := make(chan flexclient.StateUpdate)
+	sub := fc.Subscribe(flexclient.Subscription{Prefix: "client ", Updates: clients})
+	cmdResult := fc.SendNotify("sub client all")
+
+	var found, cmdComplete bool
+
+	for !found || !cmdComplete {
+		select {
+		case <-ctx.Done():
+			cmdResult.Close()
+			fc.Unsubscribe(sub)
+			return ctx.Err()
+		case upd := <-clients:
+			if upd.CurrentState["station"] == cfg.Station {
+				ClientID = strings.TrimPrefix(upd.Object, "client ")
+				ClientUUID = upd.CurrentState["client_id"]
+				found = true
+			}
+		case <-cmdResult.C:
+			cmdComplete = true
+		}
+	}
+	cmdResult.Close()
+
+	fc.Unsubscribe(sub)
+
+	log.Info().Str("client_id", ClientID).Str("uuid", ClientUUID).Msg("Found client")
+
+	if _, err := fc.SendAndWaitContext(ctx, "client bind client_id="+ClientUUID); err != nil {
+		return err
+	}
+	return nil
+}
+
+func findSlice(ctx context.Context) error {
+	log.Info().Str("ctx", "flexy").Str("slice_id", cfg.Slice).Msg("Looking for slice")
+	slices := make(chan flexclient.StateUpdate)
+	sub := fc.Subscribe(flexclient.Subscription{Prefix: "slice ", Updates: slices})
+	cmdResult := fc.SendNotify("sub slice all")
+
+	var found, cmdComplete bool
+
+	for !found || !cmdComplete {
+		select {
+		case <-ctx.Done():
+			cmdResult.Close()
+			fc.Unsubscribe(sub)
+			return ctx.Err()
+		case upd := <-slices:
+			if upd.CurrentState["index_letter"] == cfg.Slice {
+				SliceIdx = strings.TrimPrefix(upd.Object, "slice ")
+				found = true
+			}
+		case <-cmdResult.C:
+			cmdComplete = true
+		}
+	}
+	cmdResult.Close()
+	fc.Unsubscribe(sub)
+	log.Info().Str("ctx", "flexy").Str("slice_idx", SliceIdx).Msg("Found slice")
+	return nil
+}
+
+// runRadio manages one complete radio connection lifecycle. It blocks until
+// ctx is cancelled (reconnect or shutdown) or the radio disconnects.
+func runRadio(ctx context.Context) error {
+	setConnState(ConnStateConnecting, nil)
+
+	var err error
+	fc, err = flexclient.NewFlexClient(cfg.RadioIP)
+	if err != nil {
+		setConnState(ConnStateError, err)
+		return err
+	}
+
+	// runCtx is cancelled when fc.Run() exits or when ctx is cancelled.
+	runCtx, runCancel := context.WithCancel(ctx)
+	defer runCancel()
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		fc.Run()
+		log.Info().Msg("FlexClient exited")
+		runCancel()
+	}()
+
+	if cfg.Headless {
+		if err = createClient(runCtx); err != nil {
+			fc.Close()
+			wg.Wait()
+			if ctx.Err() == nil {
+				setConnState(ConnStateError, err)
+			}
+			return err
+		}
+	} else {
+		if err = bindClient(runCtx); err != nil {
+			fc.Close()
+			wg.Wait()
+			if ctx.Err() == nil {
+				setConnState(ConnStateError, err)
+			}
+			return err
+		}
+	}
+
+	if err = findSlice(runCtx); err != nil {
+		fc.Close()
+		wg.Wait()
+		if ctx.Err() == nil {
+			setConnState(ConnStateError, err)
+		}
+		return err
+	}
+
+	if _, err = fc.SendAndWaitContext(runCtx, "sub radio all"); err != nil {
+		log.Error().Err(err).Msg("Failed to subscribe to radio updates")
+	}
+	if _, err = fc.SendAndWaitContext(runCtx, "sub tx all"); err != nil {
+		log.Error().Err(err).Msg("Failed to subscribe to tx updates")
+	}
+	if _, err = fc.SendAndWaitContext(runCtx, "sub atu all"); err != nil {
+		log.Error().Err(err).Msg("Failed to subscribe to atu updates")
+	}
+
+	if cfg.Metering {
+		resetMetering()
+		enableMetering(runCtx, fc)
+	}
+
+	setConnState(ConnStateConnected, nil)
+	log.Info().Str("ctx", "flexy").Str("proto", "TCP").Msg("Connected to radio")
+
+	<-runCtx.Done()
+
+	setConnState(ConnStateDisconnected, nil)
+	fc.Close()
+	wg.Wait()
+	resetMetering()
+	log.Info().Msg("Radio connection closed")
+
+	return runCtx.Err()
+}
+
+func main() {
+	log.Logger = zerolog.New(
+		zerolog.MultiLevelWriter(
+			zerolog.ConsoleWriter{Out: os.Stderr},
+			logBuf,
+		),
+	).With().Timestamp().Logger()
+
+	flag.Parse()
+
+	logLevel, err := zerolog.ParseLevel(cfg.LogLevel)
+	if err != nil {
+		log.Fatal().Str("level", cfg.LogLevel).Msg("Unknown log level")
+	}
+	zerolog.SetGlobalLevel(logLevel)
+
+	if cfg.Profile != "" && !cfg.Headless {
+		log.Fatal().Msg("-profile doesn't make sense without -headless")
+	}
+
+	rootCtx, rootCancel := context.WithCancel(context.Background())
+	defer rootCancel()
+
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		select {
+		case sig := <-sigChan:
+			log.Info().Str("signal", sig.String()).Msg("Received signal, shutting down")
+			rootCancel()
+		case <-rootCtx.Done():
+		}
+	}()
+
+	if err := hamlib.Listen(cfg.Listen); err != nil {
+		log.Fatal().Err(err).Msg("Failed to start hamlib server")
+	}
+
+	var outerWg sync.WaitGroup
+	outerWg.Add(1)
+	go func() {
+		defer outerWg.Done()
+		hamlib.Run(rootCtx)
+		log.Info().Msg("Hamlib server exited")
+	}()
+
+	if cfg.WebListen != "" {
+		outerWg.Add(1)
+		go func() {
+			defer outerWg.Done()
+			runWebServer(rootCtx, cfg.WebListen)
+		}()
+	}
+
+	if cfg.ProxyListen != "" {
+		proxyIP := cfg.ProxyIP
+		if proxyIP == "" {
+			proxyIP = getLocalIP()
+		}
+		if proxyIP == "" {
+			log.Fatal().Msg("Could not auto-detect proxy IP; specify -proxy-ip explicitly")
+		}
+		outerWg.Add(1)
+		go func() {
+			defer outerWg.Done()
+			startSmartSDRProxy(rootCtx, cfg.ProxyListen)
+		}()
+		outerWg.Add(1)
+		go func() {
+			defer outerWg.Done()
+			startDiscoveryRelay(rootCtx, proxyIP)
+		}()
+	}
+
+	// Connection loop: reconnects when signaled via web UI or after a failure.
+	for {
+		connCtx, connCancel := context.WithCancel(rootCtx)
+
+		// Fan reconnectCh into connCancel so a web-triggered reconnect
+		// gracefully tears down the current runRadio call.
+		go func() {
+			select {
+			case <-reconnectCh:
+				log.Info().Msg("Reconnect requested")
+				connCancel()
+			case <-connCtx.Done():
+			}
+		}()
+
+		err := runRadio(connCtx)
+		connCancel() // always cancel to release the fan-out goroutine
+
+		if rootCtx.Err() != nil {
+			break
+		}
+
+		if err != nil && !errors.Is(err, context.Canceled) {
+			log.Error().Err(err).Msg("Radio connection failed; retrying in 5s")
+			select {
+			case <-time.After(5 * time.Second):
+			case <-rootCtx.Done():
+			}
+		}
+
+		if rootCtx.Err() != nil {
+			break
+		}
+	}
+
+	log.Info().Msg("Shutting down...")
+	outerWg.Wait()
+	log.Info().Msg("Shutdown complete")
+}

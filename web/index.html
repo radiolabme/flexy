@@ -1,0 +1,976 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flexy</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #1e1e2e;
+  --surface: #2a2a3e;
+  --border: #404060;
+  --text: #cdd6f4;
+  --muted: #7f849c;
+  --green: #a6e3a1;
+  --yellow: #f9e2af;
+  --red: #f38ba8;
+  --blue: #89b4fa;
+  --accent: #cba6f7;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'SF Mono', 'Fira Code', ui-monospace, monospace;
+  font-size: 14px;
+  line-height: 1.6;
+  padding: 1.5rem;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+h1 { font-size: 1.4rem; color: var(--accent); letter-spacing: 0.1em; flex-shrink: 0; }
+
+#status-dot {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  background: var(--muted);
+  flex-shrink: 0;
+  transition: background 0.3s;
+}
+#status-dot.connected  { background: var(--green); box-shadow: 0 0 6px var(--green); }
+#status-dot.connecting { background: var(--yellow); }
+#status-dot.error      { background: var(--red); }
+
+#status-text { color: var(--muted); font-size: 0.85em; }
+
+#header-freq {
+  font-size: 1.1rem;
+  font-weight: bold;
+  color: var(--blue);
+  letter-spacing: 0.04em;
+  margin-left: auto;
+}
+#header-mode { color: var(--muted); font-size: 0.85em; }
+#header-mode span { color: var(--text); }
+
+#ptt-badge {
+  padding: 2px 10px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: bold;
+  letter-spacing: 0.08em;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+#ptt-badge.active { background: var(--red); color: #1e1e2e; border-color: var(--red); }
+
+/* Tabs */
+.tabs {
+  display: flex;
+  gap: 0;
+  margin-bottom: 1.25rem;
+  border-bottom: 1px solid var(--border);
+}
+.tab-btn {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 0.85rem;
+  padding: 0.4rem 1rem;
+  cursor: pointer;
+  letter-spacing: 0.05em;
+  margin-bottom: -1px;
+  transition: color 0.15s, border-color 0.15s;
+}
+.tab-btn:hover { color: var(--text); }
+.tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+
+/* Layout */
+.section-full { margin-bottom: 1rem; }
+.grid-half {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+@media (max-width: 640px) {
+  .grid-half { grid-template-columns: 1fr; }
+  #header-freq { margin-left: 0; }
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1rem;
+}
+.card h2 {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+  margin-bottom: 0.75rem;
+}
+
+/* Network card */
+.network-layout {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+}
+@media (max-width: 640px) { .network-layout { grid-template-columns: 1fr; } }
+.network-layout h3 {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+  margin-bottom: 0.5rem;
+}
+
+/* Connections grid */
+.conn-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 1rem;
+}
+@media (max-width: 800px) { .conn-grid { grid-template-columns: 1fr; } }
+.conn-grid h3 {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+  margin-bottom: 0.5rem;
+}
+
+/* State dot */
+.state-dot {
+  display: inline-block;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+  margin-right: 4px;
+  vertical-align: middle;
+}
+.state-dot.connected  { background: var(--green); box-shadow: 0 0 4px var(--green); }
+.state-dot.connecting { background: var(--yellow); }
+.state-dot.error      { background: var(--red); }
+
+/* Tables */
+table { width: 100%; border-collapse: collapse; font-size: 0.85em; }
+th {
+  text-align: left;
+  color: var(--muted);
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 0.25rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+}
+td { padding: 0.3rem 0.5rem; border-bottom: 1px solid rgba(64,64,96,0.4); vertical-align: top; }
+tr:last-child td { border-bottom: none; }
+
+.tag-green  { color: var(--green); font-weight: bold; }
+.tag-yellow { color: var(--yellow); }
+.tag-red    { color: var(--red); }
+.tag-muted  { color: var(--muted); }
+
+/* KV lists */
+.kv-list { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.85em; }
+.kv-row  { display: flex; gap: 0.5rem; }
+.kv-key  { color: var(--muted); min-width: 140px; flex-shrink: 0; }
+.kv-val  { color: var(--text); word-break: break-all; }
+
+/* Proxy */
+.proxy-listen { font-size: 0.85em; color: var(--muted); margin-bottom: 0.6rem; }
+.proxy-listen span { color: var(--text); }
+
+.ts-badge {
+  font-size: 0.6rem;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(148,226,213,0.15);
+  color: #94e2d5;
+  vertical-align: middle;
+  margin-left: 4px;
+}
+
+/* Discovery */
+.disc-kv-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.15rem 0.75rem;
+  font-size: 0.82em;
+}
+.disc-kv-key { color: var(--muted); }
+.disc-kv-val { color: var(--text); word-break: break-all; }
+
+/* Meters */
+.meter-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  gap: 0.5rem;
+}
+.meter-item {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.4rem 0.6rem;
+}
+.meter-name { font-size: 0.65rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+.meter-val  { font-size: 1.05rem; color: var(--green); }
+
+/* Config form */
+.config-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem 1.2rem; }
+@media (max-width: 500px) { .config-grid { grid-template-columns: 1fr; } }
+.field { display: flex; flex-direction: column; gap: 3px; }
+.field.full { grid-column: 1 / -1; }
+.field > label {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+}
+input[type="text"], input[type="number"], select {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  padding: 0.35rem 0.6rem;
+  font-family: inherit;
+  font-size: 0.9rem;
+  width: 100%;
+  outline: none;
+  transition: border-color 0.2s;
+}
+input:focus, select:focus { border-color: var(--accent); }
+select option { background: var(--surface); }
+.check-field { display: flex; align-items: center; gap: 0.5rem; padding-top: 1.35rem; }
+.check-field label { font-size: 0.9rem; color: var(--text); text-transform: none; letter-spacing: normal; }
+input[type="checkbox"] { width: 14px; height: 14px; cursor: pointer; accent-color: var(--accent); }
+.actions {
+  display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;
+  margin-top: 0.75rem; padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+  grid-column: 1 / -1;
+}
+button {
+  padding: 0.45rem 1.1rem;
+  border-radius: 4px; border: none;
+  font-family: inherit; font-size: 0.875rem;
+  cursor: pointer; transition: opacity 0.15s;
+}
+button:hover { opacity: 0.85; }
+button:active { opacity: 0.7; }
+#btn-apply     { background: var(--accent); color: #1e1e2e; font-weight: bold; }
+#btn-reconnect { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
+#msg { font-size: 0.8rem; color: var(--muted); }
+#msg.err { color: var(--red); }
+
+/* Logs tab */
+#log-controls {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 0.75rem;
+  flex-wrap: wrap;
+}
+#log-level-filter {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  padding: 0.25rem 0.5rem;
+  font-family: inherit;
+  font-size: 0.8rem;
+}
+#log-autoscroll-label { font-size: 0.8rem; color: var(--muted); display: flex; align-items: center; gap: 0.3rem; }
+#btn-clear-logs {
+  padding: 0.25rem 0.75rem;
+  background: var(--surface);
+  color: var(--muted);
+  border: 1px solid var(--border);
+  font-size: 0.8rem;
+}
+#log-count { font-size: 0.75rem; color: var(--muted); margin-left: auto; }
+
+#log-view {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  height: calc(100vh - 260px);
+  min-height: 300px;
+  overflow-y: auto;
+  padding: 0.5rem;
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.log-line { display: flex; gap: 0.5rem; padding: 0.1rem 0; align-items: baseline; }
+.log-line:hover { background: rgba(255,255,255,0.03); border-radius: 3px; }
+.log-ts   { color: var(--muted); flex-shrink: 0; min-width: 80px; }
+.log-lvl  { flex-shrink: 0; min-width: 38px; font-weight: bold; text-align: center; border-radius: 3px; padding: 0 4px; font-size: 0.7rem; line-height: 1.6; }
+.log-lvl.trace { color: var(--muted); }
+.log-lvl.debug { color: var(--blue); }
+.log-lvl.info  { color: #1e1e2e; background: var(--green); }
+.log-lvl.warn  { color: #1e1e2e; background: var(--yellow); }
+.log-lvl.error { color: #1e1e2e; background: var(--red); }
+.log-lvl.fatal { color: #1e1e2e; background: var(--red); }
+.log-msg  { color: var(--text); flex: 1; word-break: break-word; }
+.log-fields { color: var(--muted); font-size: 0.75rem; word-break: break-word; }
+
+.log-badge { font-size: 0.65rem; padding: 1px 5px; border-radius: 3px; flex-shrink: 0; }
+.log-badge-proxy { background: rgba(203,166,247,0.2); color: var(--accent); }
+.log-badge-flexy  { background: rgba(137,180,250,0.2); color: var(--blue); }
+.log-badge-tcp   { background: rgba(148,226,213,0.2); color: #94e2d5; }
+.log-badge-udp   { background: rgba(250,179,135,0.2); color: #fab387; }
+.log-dir { color: var(--yellow); font-weight: bold; flex-shrink: 0; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Flexy</h1>
+  <div id="status-dot"></div>
+  <span id="status-text">connecting&hellip;</span>
+  <span id="header-freq"></span>
+  <span id="header-mode"><span id="mode-val"></span></span>
+  <span id="ptt-badge">PTT</span>
+</header>
+
+<nav class="tabs">
+  <button class="tab-btn active" data-tab="overview">Overview</button>
+  <button class="tab-btn" data-tab="logs">Logs</button>
+</nav>
+
+<!-- ===== OVERVIEW TAB ===== -->
+<div id="tab-overview" class="tab-panel active">
+
+<!-- Connections -->
+<div class="section-full">
+  <div class="card">
+    <h2>Connections</h2>
+    <div class="conn-grid">
+
+      <!-- Column 1: Flexy <-> Radio -->
+      <div>
+        <h3>Flexy TCP connection</h3>
+        <div class="kv-list" id="radio-conn-kv">
+          <span class="tag-muted" style="font-size:0.85em">Loading&hellip;</span>
+        </div>
+      </div>
+
+      <!-- Column 2: Hamlib clients -->
+      <div>
+        <h3>rigctld TCP clients</h3>
+        <div id="hamlib-conn-section">
+          <span class="tag-muted" style="font-size:0.85em">Loading&hellip;</span>
+        </div>
+      </div>
+
+      <!-- Column 3: SmartSDR Proxy clients -->
+      <div>
+        <h3>SmartSDR proxy TCP clients</h3>
+        <div id="proxy-conn-section">
+          <span class="tag-muted" style="font-size:0.85em">Loading&hellip;</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- Discovery + Meters -->
+<div class="grid-half">
+  <div class="card">
+    <h2>Discovery Relay</h2>
+    <div id="discovery-section">
+      <span style="color:var(--muted);font-size:0.85em">No discovery data yet</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Meters <span id="meter-pkt-count" style="font-weight:normal;color:var(--muted);font-size:0.8rem;text-transform:none;letter-spacing:normal"></span></h2>
+    <div class="meter-grid" id="meters-grid">
+      <span style="color:var(--muted);font-size:0.85em">No data yet</span>
+    </div>
+  </div>
+</div>
+
+<!-- SmartSDR Proxy -->
+<div class="section-full">
+  <div class="card">
+    <h2>SmartSDR Proxy</h2>
+    <div class="proxy-listen" id="proxy-listen-line">Proxy disabled</div>
+    <table id="proxy-table">
+      <thead><tr><th>Client</th><th>Radio</th><th>UDP Relay Port</th><th>Packets Rx</th><th>Last Packet</th><th>Status</th></tr></thead>
+      <tbody id="proxy-tbody"><tr><td colspan="6" class="tag-muted">No active connections</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Network & Bindings -->
+<div class="section-full">
+  <div class="card">
+    <h2>Network &amp; Bindings</h2>
+    <div class="network-layout">
+      <div>
+        <h3>Network Interfaces</h3>
+        <table id="iface-table">
+          <thead><tr><th>Interface</th><th>Addresses</th><th>Broadcast</th></tr></thead>
+          <tbody><tr><td colspan="3" class="tag-muted">Loading&hellip;</td></tr></tbody>
+        </table>
+      </div>
+      <div>
+        <h3>Bindings &amp; Routing</h3>
+        <div class="kv-list" id="bindings-list">
+          <span class="tag-muted" style="font-size:0.85em">Loading&hellip;</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Configuration -->
+<div class="section-full">
+  <div class="card">
+    <h2>Configuration</h2>
+    <form id="cfg-form">
+      <div class="config-grid">
+
+        <div class="field">
+          <label>Radio IP</label>
+          <input type="text" name="RadioIP" placeholder=":discover:">
+        </div>
+
+        <div class="field">
+          <label>Station</label>
+          <input type="text" name="Station" placeholder="Flex">
+        </div>
+
+        <div class="field">
+          <label>Slice</label>
+          <input type="text" name="Slice" placeholder="A">
+        </div>
+
+        <div class="field">
+          <label>Hamlib Listen</label>
+          <input type="text" name="Listen" placeholder=":4532" disabled title="Requires restart to change">
+        </div>
+
+        <div class="field">
+          <label>Proxy IP <span style="color:var(--muted);font-size:0.75em;text-transform:none;letter-spacing:normal">(advertised in discovery, SmartSDR connects here)</span></label>
+          <input type="text" name="ProxyIP" id="proxyip-input" list="proxyip-list" placeholder="auto-detect">
+          <datalist id="proxyip-list"></datalist>
+        </div>
+
+        <div class="field">
+          <label>Radio Bind IP <span style="color:var(--muted);font-size:0.75em;text-transform:none;letter-spacing:normal">(local IP for radio TCP/UDP, e.g. Tailscale IP)</span></label>
+          <input type="text" name="RadioBindIP" id="radiobindip-input" list="radiobindip-list" placeholder="auto-detect">
+          <datalist id="radiobindip-list"></datalist>
+        </div>
+
+        <div class="field">
+          <label>Profile</label>
+          <input type="text" name="Profile" placeholder="(none, headless only)">
+        </div>
+
+        <div class="field">
+          <label>Log Level</label>
+          <select name="LogLevel">
+            <option value="trace">trace</option>
+            <option value="debug">debug</option>
+            <option value="info">info</option>
+            <option value="warn">warn</option>
+            <option value="error">error</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>UDP Port (0 = random)</label>
+          <input type="number" name="UDPPort" min="0" max="65535" placeholder="0">
+        </div>
+
+        <div class="field">
+          <label>ChkVFO Mode</label>
+          <select name="ChkVFOMode">
+            <option value="new">new</option>
+            <option value="old">old</option>
+          </select>
+        </div>
+
+        <div class="check-field">
+          <input type="checkbox" name="Headless" id="cb-headless">
+          <label for="cb-headless">Headless mode</label>
+        </div>
+
+        <div class="check-field">
+          <input type="checkbox" name="Metering" id="cb-metering">
+          <label for="cb-metering">Metering</label>
+        </div>
+
+        <div class="actions">
+          <button type="submit" id="btn-apply">Apply &amp; Reconnect</button>
+          <button type="button" id="btn-reconnect">Reconnect</button>
+          <span id="msg"></span>
+        </div>
+
+      </div>
+    </form>
+  </div>
+</div>
+
+</div><!-- end tab-overview -->
+
+<!-- ===== LOGS TAB ===== -->
+<div id="tab-logs" class="tab-panel">
+  <div id="log-controls">
+    <select id="log-level-filter">
+      <option value="">All levels</option>
+      <option value="trace">trace+</option>
+      <option value="debug">debug+</option>
+      <option value="info">info+</option>
+      <option value="warn">warn+</option>
+      <option value="error">error+</option>
+    </select>
+    <button id="btn-clear-logs">Clear</button>
+    <label id="log-autoscroll-label">
+      <input type="checkbox" id="cb-autoscroll" checked> Auto-scroll
+    </label>
+    <span id="log-count"></span>
+  </div>
+  <div id="log-view"></div>
+</div>
+
+<script>
+// ---- Tab switching ----
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+  });
+});
+
+// ---- Helpers ----
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function formatFreqMHz(mhzStr) {
+  const mhz = parseFloat(mhzStr);
+  if (isNaN(mhz)) return mhzStr;
+  const [int_, dec] = mhz.toFixed(6).split('.');
+  return int_ + '.' + dec.slice(0,3) + '\u00a0' + dec.slice(3) + '\u00a0MHz';
+}
+
+function relativeTime(isoStr) {
+  if (!isoStr) return '';
+  const dt = new Date(isoStr);
+  const diffMs = Date.now() - dt.getTime();
+  if (diffMs < 0) return '0s ago';
+  const diffS = diffMs / 1000;
+  if (diffS < 60) return diffS.toFixed(1) + 's ago';
+  const diffM = diffS / 60;
+  if (diffM < 60) return Math.floor(diffM) + 'm ago';
+  return Math.floor(diffM / 60) + 'h ago';
+}
+
+// ---- Status ----
+const dot        = document.getElementById('status-dot');
+const statusText = document.getElementById('status-text');
+const headerFreq = document.getElementById('header-freq');
+const modeEl     = document.getElementById('mode-val');
+const pttEl      = document.getElementById('ptt-badge');
+
+function pollStatus() {
+  fetch('/api/status')
+    .then(r => r.json())
+    .then(d => {
+      dot.className = d.state;
+      statusText.textContent = d.state + (d.error ? ': ' + d.error : '');
+      if (d.state === 'connected') {
+        headerFreq.textContent = d.frequency ? formatFreqMHz(d.frequency) : '';
+        modeEl.textContent = d.mode || '';
+        if (d.ptt) pttEl.classList.add('active');
+        else       pttEl.classList.remove('active');
+      } else {
+        headerFreq.textContent = '';
+        modeEl.textContent = '';
+        pttEl.classList.remove('active');
+      }
+      const pkts = d.meterPktsRx;
+      const el = document.getElementById('meter-pkt-count');
+      if (pkts !== undefined) {
+        el.textContent = '(' + pkts.toLocaleString() + ' UDP pkts rx)';
+        el.style.color = pkts > 0 ? 'var(--green)' : 'var(--muted)';
+      }
+    })
+    .catch(() => {
+      dot.className = 'error';
+      statusText.textContent = 'unreachable';
+    });
+}
+
+// ---- Connections ----
+function pollConnections() {
+  fetch('/api/connections')
+    .then(r => r.json())
+    .then(d => {
+      // Column 1: Flexy <-> Radio
+      const rc = d.radioConn || {};
+      const kvEl = document.getElementById('radio-conn-kv');
+      const state = rc.state || 'unknown';
+      const dotCls = state === 'connected' ? 'connected' : (state === 'connecting' ? 'connecting' : (state === 'error' ? 'error' : ''));
+      let rows = [
+        ['Radio addr',     rc.addr        || '—'],
+        ['Local IP',       rc.localIP     || '—'],
+        ['Station',        rc.station     || '—'],
+        ['Slice',          rc.sliceLetter ? rc.sliceLetter + ' (idx ' + (rc.sliceIdx || '0') + ')' : '—'],
+        ['Client handle',  rc.clientHandle|| '—'],
+      ];
+      let html = '<div class="kv-row"><span class="kv-key">State</span><span class="kv-val"><span class="state-dot ' + esc(dotCls) + '"></span>' + esc(state) + '</span></div>';
+      for (const [k, v] of rows) {
+        html += `<div class="kv-row"><span class="kv-key">${esc(k)}</span><span class="kv-val">${esc(v)}</span></div>`;
+      }
+      if (state === 'connected' && rc.frequency) {
+        html += `<div class="kv-row"><span class="kv-key">Frequency</span><span class="kv-val" style="color:var(--blue)">${esc(formatFreqMHz(rc.frequency))}</span></div>`;
+      }
+      if (state === 'connected' && rc.mode) {
+        html += `<div class="kv-row"><span class="kv-key">Mode</span><span class="kv-val">${esc(rc.mode)}</span></div>`;
+      }
+      if (rc.error) {
+        html += `<div class="kv-row"><span class="kv-key">Error</span><span class="kv-val tag-red">${esc(rc.error)}</span></div>`;
+      }
+      kvEl.innerHTML = html;
+
+      // Column 2: Hamlib clients
+      const hamlibEl = document.getElementById('hamlib-conn-section');
+      const hamlibConns = d.hamlibConns || [];
+      if (hamlibConns.length === 0) {
+        hamlibEl.innerHTML = '<span class="tag-muted" style="font-size:0.85em">No hamlib clients</span>';
+      } else {
+        let tbl = '<table><thead><tr><th>Client addr</th><th>Connected</th></tr></thead><tbody>';
+        for (const c of hamlibConns) {
+          tbl += `<tr><td>${esc(c.addr || c.id)}</td><td class="tag-muted">${esc(relativeTime(c.connectedAt))}</td></tr>`;
+        }
+        tbl += '</tbody></table>';
+        hamlibEl.innerHTML = tbl;
+      }
+
+      // Column 3: Proxy clients
+      const proxyConnEl = document.getElementById('proxy-conn-section');
+      const proxyConns = d.proxyConns || [];
+      if (proxyConns.length === 0) {
+        proxyConnEl.innerHTML = '<span class="tag-muted" style="font-size:0.85em">No proxy connections</span>';
+      } else {
+        let tbl = '<table><thead><tr><th>Client</th><th>Radio</th><th>UDP relay</th><th>Pkts</th><th>Status</th></tr></thead><tbody>';
+        for (const c of proxyConns) {
+          const relay = c.udpRelay;
+          const pkts  = relay ? (relay.packetsRx || 0) : 0;
+          const last  = relay ? relay.lastPacket : null;
+          let statusHtml;
+          if (!relay) {
+            statusHtml = '<span class="tag-muted">no relay</span>';
+          } else if (pkts === 0) {
+            statusHtml = '<span class="tag-yellow">waiting</span>';
+          } else {
+            const ageMs = last ? (Date.now() - new Date(last).getTime()) : Infinity;
+            statusHtml = ageMs < 5000
+              ? '<span class="tag-green">flowing</span>'
+              : '<span class="tag-yellow">stalled</span>';
+          }
+          const relayPort = relay ? esc(relay.relayPort) : '<span class="tag-muted">—</span>';
+          tbl += `<tr>
+            <td>${esc(c.clientAddr)}</td>
+            <td>${esc(c.radioAddr)}</td>
+            <td>${relayPort}</td>
+            <td>${pkts.toLocaleString()}</td>
+            <td>${statusHtml}</td>
+          </tr>`;
+        }
+        tbl += '</tbody></table>';
+        proxyConnEl.innerHTML = tbl;
+      }
+    })
+    .catch(() => {});
+}
+
+// ---- Network ----
+function pollNetwork() {
+  fetch('/api/network')
+    .then(r => r.json())
+    .then(d => {
+      // Populate proxy IP and radio bind IP datalists
+      const allIPs = d.allIPs || [];
+      const ipOptions = allIPs.map(a => {
+        const label = a.tailscale ? a.ip + ' (Tailscale)' : a.ip;
+        return `<option value="${esc(a.ip)}" label="${esc(label)}">`;
+      }).join('');
+      document.getElementById('proxyip-list').innerHTML = ipOptions;
+      document.getElementById('radiobindip-list').innerHTML = ipOptions;
+
+      // Interface table (addrs now [{cidr,ip,tailscale}])
+      const tbody = document.querySelector('#iface-table tbody');
+      const ifaces = d.interfaces || [];
+      tbody.innerHTML = ifaces.length === 0
+        ? '<tr><td colspan="3" class="tag-muted">None</td></tr>'
+        : ifaces.map(iface => {
+            const addrs = (iface.addrs||[]).map(a => {
+              const ts = a.tailscale ? '<span class="ts-badge">Tailscale</span>' : '';
+              return esc(a.cidr || a.ip) + ts;
+            }).join('<br>');
+            const bcast = iface.broadcast || '<span class="tag-muted">—</span>';
+            return `<tr><td>${esc(iface.name)}</td><td>${addrs}</td><td>${esc(bcast)}</td></tr>`;
+          }).join('');
+
+      // Bindings list
+      const bl = document.getElementById('bindings-list');
+      const bindings = d.bindings || {};
+      const rows = [
+        ['Radio addr',       d.radioAddr                                         || '—'],
+        ['Local IP to radio',d.localIPToRadio                                    || '—'],
+        ['Radio bind IP',    d.radioBindIP ? d.radioBindIP + ' (configured)' : 'auto'],
+        ['Hamlib listen',    bindings.hamlib                                     || '—'],
+        ['Web listen',       bindings.web                                        || '—'],
+        ['Proxy listen',     bindings.proxy                                      || '—'],
+      ];
+      bl.innerHTML = rows.map(([k,v]) =>
+        `<div class="kv-row"><span class="kv-key">${esc(k)}</span><span class="kv-val">${esc(v)}</span></div>`
+      ).join('');
+
+      // Discovery
+      const disc = d.discovery || {};
+      const kv   = disc.kv || {};
+      const discEl = document.getElementById('discovery-section');
+      const kvKeys = Object.keys(kv);
+      if (!disc.broadcastAddr && kvKeys.length === 0) {
+        discEl.innerHTML = '<span style="color:var(--muted);font-size:0.85em">No discovery data yet</span>';
+      } else {
+        let html = '<div class="kv-list" style="margin-bottom:0.6rem;font-size:0.85em">';
+        if (disc.broadcastAddr)
+          html += `<div class="kv-row"><span class="kv-key">Broadcast to</span><span class="kv-val">${esc(disc.broadcastAddr+':4992')}</span></div>`;
+        if (disc.proxyIP)
+          html += `<div class="kv-row"><span class="kv-key">Proxy IP</span><span class="kv-val">${esc(disc.proxyIP)}</span></div>`;
+        html += '</div>';
+        if (kvKeys.length > 0) {
+          html += '<div class="disc-kv-grid">';
+          for (const k of kvKeys.sort())
+            html += `<span class="disc-kv-key">${esc(k)}</span><span class="disc-kv-val">${esc(kv[k])}</span>`;
+          html += '</div>';
+        }
+        discEl.innerHTML = html;
+      }
+
+      // Proxy listen line
+      const pll = document.getElementById('proxy-listen-line');
+      pll.innerHTML = bindings.proxy
+        ? 'Listening on: <span>' + esc(bindings.proxy) + '</span>'
+        : 'Proxy disabled';
+    })
+    .catch(() => {});
+}
+
+// ---- Proxy connections ----
+function pollProxy() {
+  fetch('/api/proxy')
+    .then(r => r.json())
+    .then(conns => {
+      const tbody = document.getElementById('proxy-tbody');
+      if (!conns || conns.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" class="tag-muted">No active connections</td></tr>';
+        return;
+      }
+      tbody.innerHTML = conns.map(c => {
+        const relay = c.udpRelay;
+        const pkts  = relay ? relay.packetsRx : 0;
+        const last  = relay ? relay.lastPacket : null;
+
+        let statusHtml;
+        if (!relay) {
+          statusHtml = '<span class="tag-muted">no udpport seen</span>';
+        } else if (pkts === 0) {
+          statusHtml = '<span class="tag-yellow">waiting</span>';
+        } else {
+          const ageMs = last ? (Date.now() - new Date(last).getTime()) : Infinity;
+          statusHtml = ageMs < 5000
+            ? '<span class="tag-green">flowing</span>'
+            : '<span class="tag-yellow">stalled</span>';
+        }
+
+        return `<tr>
+          <td>${esc(c.clientAddr)}</td>
+          <td>${esc(c.radioAddr)}</td>
+          <td>${relay ? esc(relay.relayPort) : '<span class="tag-muted">—</span>'}</td>
+          <td>${pkts.toLocaleString()}</td>
+          <td>${last ? esc(relativeTime(last)) : '<span class="tag-muted">—</span>'}</td>
+          <td>${statusHtml}</td>
+        </tr>`;
+      }).join('');
+    })
+    .catch(() => {});
+}
+
+// ---- Meters ----
+function pollMeters() {
+  fetch('/api/meters')
+    .then(r => r.json())
+    .then(d => {
+      const keys = Object.keys(d);
+      const el = document.getElementById('meters-grid');
+      if (keys.length === 0) {
+        el.innerHTML = '<span style="color:var(--muted);font-size:0.85em">No data yet</span>';
+        return;
+      }
+      el.innerHTML = keys.map(k => {
+        const v = typeof d[k] === 'number' ? d[k].toFixed(2) : d[k];
+        return `<div class="meter-item"><div class="meter-name">${esc(k)}</div><div class="meter-val">${esc(v)}</div></div>`;
+      }).join('');
+    })
+    .catch(() => {});
+}
+
+// ---- Config ----
+const form  = document.getElementById('cfg-form');
+const msgEl = document.getElementById('msg');
+
+function loadConfig() {
+  fetch('/api/config').then(r => r.json()).then(d => {
+    for (const [k,v] of Object.entries(d)) {
+      const el = form.elements[k];
+      if (!el) continue;
+      if (el.type === 'checkbox') el.checked = !!v;
+      else el.value = (v !== null && v !== undefined) ? v : '';
+    }
+  });
+}
+function setMsg(text, isError) {
+  msgEl.textContent = text;
+  msgEl.className = isError ? 'err' : '';
+}
+form.addEventListener('submit', e => {
+  e.preventDefault();
+  const data = {};
+  for (const el of form.elements) {
+    if (!el.name || el.disabled) continue;
+    if (el.type === 'checkbox') data[el.name] = el.checked;
+    else if (el.type === 'number') data[el.name] = Number(el.value) || 0;
+    else data[el.name] = el.value;
+  }
+  fetch('/api/config').then(r => r.json()).then(current => {
+    data.Listen = current.Listen;
+    return fetch('/api/config', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)});
+  }).then(r => {
+    if (!r.ok) return r.text().then(t => { throw new Error(t.trim()); });
+    return r.json();
+  }).then(() => setMsg('Config applied, reconnecting\u2026', false))
+    .catch(err => setMsg('Error: ' + err.message, true));
+});
+document.getElementById('btn-reconnect').addEventListener('click', () => {
+  setMsg('Reconnecting\u2026', false);
+  fetch('/api/reconnect', {method:'POST'}).then(r => r.json())
+    .then(() => setMsg('Reconnect signaled', false))
+    .catch(err => setMsg('Error: ' + err.message, true));
+});
+
+// ---- Logs ----
+const logView      = document.getElementById('log-view');
+const logCountEl   = document.getElementById('log-count');
+const levelFilter  = document.getElementById('log-level-filter');
+const cbAutoscroll = document.getElementById('cb-autoscroll');
+const levelOrder   = {trace:0, debug:1, info:2, warn:3, error:4, fatal:5};
+
+let lastLogSeq = 0;
+let allLogLines = [];
+
+document.getElementById('btn-clear-logs').addEventListener('click', () => {
+  allLogLines = [];
+  renderLogs();
+});
+
+function renderLogs() {
+  const minLevel = levelFilter.value ? (levelOrder[levelFilter.value] ?? 0) : -1;
+  const filtered = minLevel < 0 ? allLogLines : allLogLines.filter(l => (levelOrder[l.level] ?? 0) >= minLevel);
+  logCountEl.textContent = filtered.length + ' lines';
+  logView.innerHTML = filtered.map(l => {
+    const lvl   = (l.level || 'info').toLowerCase();
+    const ts    = l.time ? new Date(l.time).toLocaleTimeString() : '';
+    const msg   = l.message || l.msg || '';
+    const skipFields = new Set(['level','time','message','msg','ctx','proto','dir']);
+    const fields = Object.entries(l)
+      .filter(([k]) => !skipFields.has(k))
+      .map(([k,v]) => `${esc(k)}=${esc(typeof v === 'object' ? JSON.stringify(v) : v)}`)
+      .join(' ');
+    const ctxBadge   = l.ctx   ? `<span class="log-badge log-badge-${esc(l.ctx)}">${esc(l.ctx)}</span>` : '';
+    const protoBadge = l.proto ? `<span class="log-badge log-badge-${esc(l.proto.toLowerCase())}">${esc(l.proto)}</span>` : '';
+    const dirSpan    = l.dir   ? `<span class="log-dir">${esc(l.dir)}</span>` : '';
+    return `<div class="log-line">
+      <span class="log-ts">${esc(ts)}</span>
+      <span class="log-lvl ${esc(lvl)}">${esc(lvl)}</span>
+      ${ctxBadge}${protoBadge}${dirSpan}
+      <span class="log-msg">${esc(msg)}${fields ? ' <span class="log-fields">' + fields + '</span>' : ''}</span>
+    </div>`;
+  }).join('');
+  if (cbAutoscroll.checked) logView.scrollTop = logView.scrollHeight;
+}
+
+levelFilter.addEventListener('change', renderLogs);
+
+function pollLogs() {
+  fetch('/api/logs?since=' + lastLogSeq)
+    .then(r => r.json())
+    .then(d => {
+      if (!d.lines || d.lines.length === 0) return;
+      for (const line of d.lines) {
+        try {
+          const parsed = JSON.parse(line.text);
+          allLogLines.push(parsed);
+        } catch { allLogLines.push({level:'info', message: line.text}); }
+      }
+      // Keep last 1000 lines
+      if (allLogLines.length > 1000) allLogLines = allLogLines.slice(-1000);
+      lastLogSeq = d.lastSeq + 1;
+      renderLogs();
+    })
+    .catch(() => {});
+}
+
+// ---- Init ----
+loadConfig();
+pollStatus();
+pollConnections();
+pollNetwork();
+pollProxy();
+pollMeters();
+pollLogs();
+
+setInterval(pollStatus,      1000);
+setInterval(pollConnections, 1000);
+setInterval(pollNetwork,     3000);
+setInterval(pollProxy,       1000);
+setInterval(pollMeters,      2000);
+setInterval(pollLogs,        1000);
+</script>
+
+</body>
+</html>

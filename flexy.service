@@ -1,0 +1,23 @@
+[Unit]
+Description=Flexy - FlexRadio bridge (hamlib + SmartSDR proxy + web UI)
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/flexy \
+    -radio :discover: \
+    -headless \
+    -listen :4532 \
+    -web :8080 \
+    -proxy :4992 \
+    -log-level info
+Restart=on-failure
+RestartSec=5s
+
+# Run as a dedicated user if desired:
+# User=flexy
+# Group=flexy
+
+[Install]
+WantedBy=multi-user.target
