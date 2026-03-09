@@ -6,8 +6,10 @@ import (
 	"bufio"
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"net"
+	"os/exec"
 	"regexp"
 	"sort"
 	"strconv"
@@ -249,6 +251,36 @@ func lanBroadcastAddrs() []net.IP {
 	return out
 }
 
+// tailscaleOnlinePeers returns the Tailscale IPs of all currently-online peers
+// by running `tailscale status --json`. Returns nil on any error.
+func tailscaleOnlinePeers() []net.IP {
+	out, err := exec.Command("tailscale", "status", "--json").Output()
+	if err != nil {
+		return nil
+	}
+	var status struct {
+		Peer map[string]struct {
+			TailscaleIPs []string `json:"TailscaleIPs"`
+			Online       bool     `json:"Online"`
+		} `json:"Peer"`
+	}
+	if err := json.Unmarshal(out, &status); err != nil {
+		return nil
+	}
+	var peers []net.IP
+	for _, peer := range status.Peer {
+		if !peer.Online {
+			continue
+		}
+		for _, ipStr := range peer.TailscaleIPs {
+			if ip := net.ParseIP(ipStr); ip != nil {
+				peers = append(peers, ip)
+			}
+		}
+	}
+	return peers
+}
+
 // startDiscoveryRelay periodically broadcasts a VITA-49 discovery packet
 // advertising Flexy as a proxy for the connected radio. Broadcasts on all
 // non-Tailscale LAN interfaces so clients on the local network can discover it.
@@ -289,6 +321,14 @@ func startDiscoveryRelay(ctx context.Context, proxyIP string) {
 				bcastAddr := &net.UDPAddr{IP: bcastIP, Port: 4992}
 				if _, err := sendConn.WriteTo(pkt, bcastAddr); err != nil {
 					log.Debug().Err(err).Str("broadcast", bcastIP.String()).Msg("Discovery relay: broadcast failed")
+				}
+			}
+			// Unicast to all online Tailscale peers so remote SmartSDR clients
+			// can discover Flexy without needing to receive the LAN broadcast.
+			for _, peerIP := range tailscaleOnlinePeers() {
+				peerAddr := &net.UDPAddr{IP: peerIP, Port: 4992}
+				if _, err := sendConn.WriteTo(pkt, peerAddr); err != nil {
+					log.Debug().Err(err).Str("peer", peerIP.String()).Msg("Discovery relay: unicast failed")
 				}
 			}
 		}
