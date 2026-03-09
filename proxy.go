@@ -432,6 +432,7 @@ func handleSmartSDRClient(clientConn net.Conn) {
 		if proxyIPStr != "" && cfg.RadioIP != "" {
 			line = strings.ReplaceAll(line, "ip="+cfg.RadioIP, "ip="+proxyIPStr)
 		}
+		log.Debug().Str("ctx", "proxy").Str("proto", "TCP").Str("dir", "←").Str("line", line).Msg("proxy resp")
 		if _, err := fmt.Fprintf(clientConn, "%s\n", line); err != nil {
 			break
 		}
