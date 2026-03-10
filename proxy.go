@@ -212,10 +212,28 @@ type tailscalePeer struct {
 	IPs  []net.IP
 }
 
+var (
+	tsPeerCacheMu  sync.Mutex
+	tsPeerCache    []tailscalePeer
+	tsPeerCacheAt  time.Time
+	tsPeerCacheTTL = 10 * time.Second
+)
+
 // tailscaleOnlinePeers returns all currently-online Tailscale peers with their
-// machine name and IPv4 addresses (Tailscale IPs + LAN endpoints), by running
-// `tailscale status --json`.
+// machine name and IPv4 addresses. Results are cached for 10 s to avoid
+// spawning a subprocess on every radio broadcast.
 func tailscaleOnlinePeers() []tailscalePeer {
+	tsPeerCacheMu.Lock()
+	defer tsPeerCacheMu.Unlock()
+	if time.Since(tsPeerCacheAt) < tsPeerCacheTTL {
+		return tsPeerCache
+	}
+	tsPeerCache = tailscaleStatusPeers()
+	tsPeerCacheAt = time.Now()
+	return tsPeerCache
+}
+
+func tailscaleStatusPeers() []tailscalePeer {
 	out, err := exec.Command("tailscale", "status", "--json").Output()
 	if err != nil {
 		return nil
@@ -504,17 +522,22 @@ func handleSmartSDRClient(clientConn net.Conn) {
 			log.Debug().Str("ctx", "proxy").Str("proto", "TCP").Str("dir", "→").Str("line", line).Msg("proxy cmd")
 			if m := udpPortRe.FindStringSubmatch(line); m != nil {
 				clientPort, _ := strconv.Atoi(m[2])
-				localPort, counter, err := startUDPRelay(bindIP, clientAddr.IP.String(), clientPort, done)
-				if err != nil {
-					log.Error().Err(err).Msg("SmartSDR proxy: UDP relay setup failed")
+				if clientPort == 0 {
+					// Port 0 is a deregister request — pass through unchanged.
+					log.Debug().Str("ctx", "proxy").Str("proto", "UDP").Msg("UDP deregister (port 0): passing through")
 				} else {
-					conn.setRelay(counter)
-					log.Info().
-						Str("ctx", "proxy").Str("proto", "UDP").
-						Str("client", fmt.Sprintf("%s:%d", clientAddr.IP, clientPort)).
-						Int("relay_port", localPort).
-						Msg("UDP relay: radio→Flexy:relay_port→client")
-					line = m[1] + strconv.Itoa(localPort)
+					localPort, counter, err := startUDPRelay(bindIP, clientAddr.IP.String(), clientPort, done)
+					if err != nil {
+						log.Error().Err(err).Msg("SmartSDR proxy: UDP relay setup failed")
+					} else {
+						conn.setRelay(counter)
+						log.Info().
+							Str("ctx", "proxy").Str("proto", "UDP").
+							Str("client", fmt.Sprintf("%s:%d", clientAddr.IP, clientPort)).
+							Int("relay_port", localPort).
+							Msg("UDP relay: radio→Flexy:relay_port→client")
+						line = m[1] + strconv.Itoa(localPort)
+					}
 				}
 			}
 			if _, err := fmt.Fprintf(radioConn, "%s\n", line); err != nil {
