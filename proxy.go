@@ -469,6 +469,20 @@ func handleSmartSDRClient(clientConn net.Conn) {
 		if myHandle == "" || (len(ownedPans) == 0 && len(ownedSlices) == 0) {
 			return
 		}
+		// Skip cleanup if other proxy clients (DAX, CAT, etc.) are still
+		// connected — they may be bound to this client's pans/slices and
+		// removing them would disrupt the active session and cause their
+		// station pickers to go blank. Cleanup only matters when this is
+		// the sole client, to prevent the next connection from silently
+		// restoring a stale session and skipping client udpport.
+		proxyConnsMu.RLock()
+		otherConns := len(proxyConns) > 1
+		proxyConnsMu.RUnlock()
+		if otherConns {
+			log.Info().Str("ctx", "proxy").Str("handle", myHandle).
+				Msg("Proxy cleanup skipped: other clients still connected")
+			return
+		}
 		log.Info().Str("ctx", "proxy").Str("handle", myHandle).
 			Int("pans", len(ownedPans)).Int("slices", len(ownedSlices)).
 			Msg("Proxy cleanup: removing client pans and slices on disconnect")
