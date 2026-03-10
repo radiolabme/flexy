@@ -252,15 +252,23 @@ func lanBroadcastAddrs() []net.IP {
 	return out
 }
 
-// tailscaleOnlinePeers returns the Tailscale IPs of all currently-online peers
-// by running `tailscale status --json`. Returns nil on any error.
-func tailscaleOnlinePeers() []net.IP {
+// tailscalePeer holds the machine name and all IPv4 addresses for one online
+// Tailscale peer.
+type tailscalePeer struct {
+	Name string
+	IPs  []net.IP
+}
+
+// tailscaleOnlinePeers returns all currently-online Tailscale peers with their
+// machine name and IPv4 addresses, by running `tailscale status --json`.
+func tailscaleOnlinePeers() []tailscalePeer {
 	out, err := exec.Command("tailscale", "status", "--json").Output()
 	if err != nil {
 		return nil
 	}
 	var status struct {
 		Peer map[string]struct {
+			HostName     string   `json:"HostName"`
 			TailscaleIPs []string `json:"TailscaleIPs"`
 			Online       bool     `json:"Online"`
 		} `json:"Peer"`
@@ -268,15 +276,21 @@ func tailscaleOnlinePeers() []net.IP {
 	if err := json.Unmarshal(out, &status); err != nil {
 		return nil
 	}
-	var peers []net.IP
+	var peers []tailscalePeer
 	for _, peer := range status.Peer {
 		if !peer.Online {
 			continue
 		}
+		var ips []net.IP
 		for _, ipStr := range peer.TailscaleIPs {
 			if ip := net.ParseIP(ipStr); ip != nil {
-				peers = append(peers, ip)
+				if ip.To4() != nil {
+					ips = append(ips, ip)
+				}
 			}
+		}
+		if len(ips) > 0 {
+			peers = append(peers, tailscalePeer{Name: peer.HostName, IPs: ips})
 		}
 	}
 	return peers
@@ -315,8 +329,12 @@ func startDiscoveryRelay(ctx context.Context, proxyIP string) {
 			}
 			peers := tailscaleOnlinePeers()
 			var unicastStrs []string
-			for _, ip := range peers {
-				unicastStrs = append(unicastStrs, ip.String())
+			for _, peer := range peers {
+				var ipStrs []string
+				for _, ip := range peer.IPs {
+					ipStrs = append(ipStrs, ip.String())
+				}
+				unicastStrs = append(unicastStrs, peer.Name+" ("+strings.Join(ipStrs, ", ")+")")
 			}
 			discoveryMu.Lock()
 			lastDiscoveryKV = kv
@@ -330,12 +348,15 @@ func startDiscoveryRelay(ctx context.Context, proxyIP string) {
 					log.Debug().Err(err).Str("broadcast", bcastIP.String()).Msg("Discovery relay: broadcast failed")
 				}
 			}
-			// Unicast to all online Tailscale peers so remote SmartSDR clients
-			// can discover Flexy without needing to receive the LAN broadcast.
-			for _, peerIP := range peers {
-				peerAddr := &net.UDPAddr{IP: peerIP, Port: 4992}
-				if _, err := sendConn.WriteTo(pkt, peerAddr); err != nil {
-					log.Debug().Err(err).Str("peer", peerIP.String()).Msg("Discovery relay: unicast failed")
+			// Unicast to all IPv4 addresses of every online Tailscale peer so
+			// remote SmartSDR clients can discover Flexy without needing to
+			// receive the LAN broadcast.
+			for _, peer := range peers {
+				for _, peerIP := range peer.IPs {
+					peerAddr := &net.UDPAddr{IP: peerIP, Port: 4992}
+					if _, err := sendConn.WriteTo(pkt, peerAddr); err != nil {
+						log.Debug().Err(err).Str("peer", peerIP.String()).Msg("Discovery relay: unicast failed")
+					}
 				}
 			}
 		}

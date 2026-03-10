@@ -771,7 +771,7 @@ function pollNetwork() {
         if (disc.broadcastAddr)
           html += `<div class="kv-row"><span class="kv-key">Broadcast to</span><span class="kv-val">${esc(disc.broadcastAddr+':4992')}</span></div>`;
         if (disc.unicastAddrs && disc.unicastAddrs.length > 0)
-          html += `<div class="kv-row"><span class="kv-key">Unicast to</span><span class="kv-val">${disc.unicastAddrs.map(ip => esc(ip+':4992')).join('<br>')}</span></div>`;
+          html += `<div class="kv-row"><span class="kv-key">Unicast to</span><span class="kv-val">${disc.unicastAddrs.map(s => esc(s)).join('<br>')}</span></div>`;
         if (disc.proxyIP)
           html += `<div class="kv-row"><span class="kv-key">Proxy IP</span><span class="kv-val">${esc(disc.proxyIP)}</span></div>`;
         html += '</div>';
