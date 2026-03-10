@@ -56,12 +56,14 @@ var (
 )
 
 // parseDiscoveryPayload parses VITA-49 discovery packet key=value payload.
+// 0x7f is the FlexRadio-encoded space character and is decoded to a real space.
 func parseDiscoveryPayload(s string) map[string]string {
 	result := map[string]string{}
 	s = strings.Trim(s, " \x00")
 	for _, part := range strings.Fields(s) {
 		if idx := strings.IndexByte(part, '='); idx >= 0 {
-			result[part[:idx]] = part[idx+1:]
+			v := strings.ReplaceAll(part[idx+1:], "\x7f", " ")
+			result[part[:idx]] = v
 		}
 	}
 	return result
@@ -164,56 +166,7 @@ func getBroadcastAddr(ip string) net.IP {
 	return net.IPv4bcast
 }
 
-// parseInfoResponse parses the comma-separated key=value (with quoted values)
-// response from the radio's "info" command into a map.
-func parseInfoResponse(s string) map[string]string {
-	result := map[string]string{}
-	for _, part := range strings.Split(s, ",") {
-		part = strings.TrimSpace(part)
-		idx := strings.IndexByte(part, '=')
-		if idx < 0 {
-			continue
-		}
-		k := part[:idx]
-		v := strings.Trim(part[idx+1:], `"`)
-		result[k] = v
-	}
-	return result
-}
 
-// buildDiscoveryKV constructs the key-value map for the discovery packet
-// using info from the radio's TCP API.
-func buildDiscoveryKV(proxyIP string) map[string]string {
-	kv := map[string]string{
-		"ip":     proxyIP,
-		"port":   "4992",
-		"status": "Available",
-	}
-
-	if fc != nil {
-		res := fc.SendAndWait("info")
-		if res.Error == 0 && res.Message != "" {
-			info := parseInfoResponse(res.Message)
-			for src, dst := range map[string]string{
-				"model":        "model",
-				"chassis_serial": "serial",
-				"name":         "nickname",
-				"callsign":     "callsign",
-				"software_ver": "version",
-			} {
-				if v := info[src]; v != "" {
-					kv[dst] = v
-				}
-			}
-		}
-	}
-
-	if nick := kv["nickname"]; nick != "" {
-		kv["nickname"] = nick + " [Flexy]"
-	}
-
-	return kv
-}
 
 // lanBroadcastAddrs returns the broadcast address for every non-Tailscale,
 // non-loopback, up IPv4 interface. Used so discovery reaches LAN clients
@@ -313,10 +266,19 @@ func tailscaleOnlinePeers() []tailscalePeer {
 	return peers
 }
 
-// startDiscoveryRelay periodically broadcasts a VITA-49 discovery packet
-// advertising Flexy as a proxy for the connected radio. Broadcasts on all
-// non-Tailscale LAN interfaces so clients on the local network can discover it.
+// startDiscoveryRelay listens for VITA-49 discovery broadcasts from the radio,
+// rewrites the radio's IP to the proxy IP, and re-broadcasts to all LAN
+// interfaces and unicasts to all online Tailscale peers. This preserves every
+// field in the radio's original packet (including gui_client_handles etc.)
+// so that SmartSDR DAX/CAT can discover connected stations.
 func startDiscoveryRelay(ctx context.Context, proxyIP string) {
+	recvConn, err := discoveryListenReusePort()
+	if err != nil {
+		log.Error().Err(err).Msg("Discovery relay: failed to listen on :4992")
+		return
+	}
+	defer recvConn.Close()
+
 	sendConn, err := net.ListenUDP("udp", &net.UDPAddr{})
 	if err != nil {
 		log.Error().Err(err).Msg("Discovery relay: failed to open send socket")
@@ -324,56 +286,70 @@ func startDiscoveryRelay(ctx context.Context, proxyIP string) {
 	}
 	defer sendConn.Close()
 
+	go func() {
+		<-ctx.Done()
+		recvConn.Close()
+	}()
+
 	log.Info().Str("ctx", "proxy").Str("proto", "UDP").Str("proxy_ip", proxyIP).Msg("Discovery relay active")
 
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
-
+	buf := make([]byte, 65536)
 	for {
-		select {
-		case <-ctx.Done():
+		n, addr, err := recvConn.ReadFrom(buf)
+		if err != nil {
 			return
-		case <-ticker.C:
-			state, _ := getConnState()
-			if state != ConnStateConnected {
-				continue
+		}
+		udpAddr, ok := addr.(*net.UDPAddr)
+		if !ok || udpAddr.IP.String() != cfg.RadioIP {
+			continue // only relay the radio's own discovery broadcasts
+		}
+		if n < 12 {
+			continue
+		}
+
+		// Parse the radio's payload (bytes 12+), rewrite ip= and annotate nickname.
+		kv := parseDiscoveryPayload(string(buf[12:n]))
+		if len(kv) == 0 {
+			continue
+		}
+		kv["ip"] = proxyIP
+		if nick := kv["nickname"]; nick != "" {
+			kv["nickname"] = nick + " [Flexy]"
+		}
+
+		pkt := buildDiscoveryPacket(kv)
+
+		bcastAddrs := lanBroadcastAddrs()
+		var bcastStrs []string
+		for _, b := range bcastAddrs {
+			bcastStrs = append(bcastStrs, b.String())
+		}
+
+		peers := tailscaleOnlinePeers()
+		var unicastStrs []string
+		for _, peer := range peers {
+			var ipStrs []string
+			for _, ip := range peer.IPs {
+				ipStrs = append(ipStrs, ip.String())
 			}
-			kv := buildDiscoveryKV(proxyIP)
-			bcastAddrs := lanBroadcastAddrs()
-			var bcastStrs []string
-			for _, b := range bcastAddrs {
-				bcastStrs = append(bcastStrs, b.String())
+			unicastStrs = append(unicastStrs, peer.Name+" ("+strings.Join(ipStrs, ", ")+")")
+		}
+
+		discoveryMu.Lock()
+		lastDiscoveryKV = kv
+		lastBcastAddr = strings.Join(bcastStrs, ", ")
+		lastUnicastAddrs = unicastStrs
+		discoveryMu.Unlock()
+
+		for _, bcastIP := range bcastAddrs {
+			if _, err := sendConn.WriteTo(pkt, &net.UDPAddr{IP: bcastIP, Port: 4992}); err != nil {
+				log.Debug().Err(err).Str("broadcast", bcastIP.String()).Msg("Discovery relay: broadcast failed")
 			}
-			peers := tailscaleOnlinePeers()
-			var unicastStrs []string
-			for _, peer := range peers {
-				var ipStrs []string
-				for _, ip := range peer.IPs {
-					ipStrs = append(ipStrs, ip.String())
-				}
-				unicastStrs = append(unicastStrs, peer.Name+" ("+strings.Join(ipStrs, ", ")+")")
-			}
-			discoveryMu.Lock()
-			lastDiscoveryKV = kv
-			lastBcastAddr = strings.Join(bcastStrs, ", ")
-			lastUnicastAddrs = unicastStrs
-			discoveryMu.Unlock()
-			pkt := buildDiscoveryPacket(kv)
-			for _, bcastIP := range bcastAddrs {
-				bcastAddr := &net.UDPAddr{IP: bcastIP, Port: 4992}
-				if _, err := sendConn.WriteTo(pkt, bcastAddr); err != nil {
-					log.Debug().Err(err).Str("broadcast", bcastIP.String()).Msg("Discovery relay: broadcast failed")
-				}
-			}
-			// Unicast to all IPv4 addresses of every online Tailscale peer so
-			// remote SmartSDR clients can discover Flexy without needing to
-			// receive the LAN broadcast.
-			for _, peer := range peers {
-				for _, peerIP := range peer.IPs {
-					peerAddr := &net.UDPAddr{IP: peerIP, Port: 4992}
-					if _, err := sendConn.WriteTo(pkt, peerAddr); err != nil {
-						log.Debug().Err(err).Str("peer", peerIP.String()).Msg("Discovery relay: unicast failed")
-					}
+		}
+		for _, peer := range peers {
+			for _, peerIP := range peer.IPs {
+				if _, err := sendConn.WriteTo(pkt, &net.UDPAddr{IP: peerIP, Port: 4992}); err != nil {
+					log.Debug().Err(err).Str("peer", peerIP.String()).Msg("Discovery relay: unicast failed")
 				}
 			}
 		}
