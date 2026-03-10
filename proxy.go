@@ -49,9 +49,10 @@ func proxyBindIP() net.IP {
 }
 
 var (
-	discoveryMu     sync.RWMutex
-	lastDiscoveryKV map[string]string
-	lastBcastAddr   string
+	discoveryMu       sync.RWMutex
+	lastDiscoveryKV   map[string]string
+	lastBcastAddr     string
+	lastUnicastAddrs  []string
 )
 
 // parseDiscoveryPayload parses VITA-49 discovery packet key=value payload.
@@ -312,9 +313,15 @@ func startDiscoveryRelay(ctx context.Context, proxyIP string) {
 			for _, b := range bcastAddrs {
 				bcastStrs = append(bcastStrs, b.String())
 			}
+			peers := tailscaleOnlinePeers()
+			var unicastStrs []string
+			for _, ip := range peers {
+				unicastStrs = append(unicastStrs, ip.String())
+			}
 			discoveryMu.Lock()
 			lastDiscoveryKV = kv
 			lastBcastAddr = strings.Join(bcastStrs, ", ")
+			lastUnicastAddrs = unicastStrs
 			discoveryMu.Unlock()
 			pkt := buildDiscoveryPacket(kv)
 			for _, bcastIP := range bcastAddrs {
@@ -325,7 +332,7 @@ func startDiscoveryRelay(ctx context.Context, proxyIP string) {
 			}
 			// Unicast to all online Tailscale peers so remote SmartSDR clients
 			// can discover Flexy without needing to receive the LAN broadcast.
-			for _, peerIP := range tailscaleOnlinePeers() {
+			for _, peerIP := range peers {
 				peerAddr := &net.UDPAddr{IP: peerIP, Port: 4992}
 				if _, err := sendConn.WriteTo(pkt, peerAddr); err != nil {
 					log.Debug().Err(err).Str("peer", peerIP.String()).Msg("Discovery relay: unicast failed")

@@ -215,6 +215,7 @@ func handleAPINetwork(w http.ResponseWriter, r *http.Request) {
 	discoveryMu.RLock()
 	kv := lastDiscoveryKV
 	bcast := lastBcastAddr
+	unicastAddrs := lastUnicastAddrs
 	discoveryMu.RUnlock()
 
 	resp := map[string]interface{}{
@@ -231,6 +232,7 @@ func handleAPINetwork(w http.ResponseWriter, r *http.Request) {
 		"discovery": map[string]interface{}{
 			"proxyIP":       cfg.ProxyIP,
 			"broadcastAddr": bcast,
+			"unicastAddrs":  unicastAddrs,
 			"kv":            kv,
 		},
 	}
