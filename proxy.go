@@ -260,7 +260,8 @@ type tailscalePeer struct {
 }
 
 // tailscaleOnlinePeers returns all currently-online Tailscale peers with their
-// machine name and IPv4 addresses, by running `tailscale status --json`.
+// machine name and IPv4 addresses (Tailscale IPs + LAN endpoints), by running
+// `tailscale status --json`.
 func tailscaleOnlinePeers() []tailscalePeer {
 	out, err := exec.Command("tailscale", "status", "--json").Output()
 	if err != nil {
@@ -270,6 +271,7 @@ func tailscaleOnlinePeers() []tailscalePeer {
 		Peer map[string]struct {
 			HostName     string   `json:"HostName"`
 			TailscaleIPs []string `json:"TailscaleIPs"`
+			Addrs        []string `json:"Addrs"` // WireGuard endpoints, "ip:port"
 			Online       bool     `json:"Online"`
 		} `json:"Peer"`
 	}
@@ -281,16 +283,31 @@ func tailscaleOnlinePeers() []tailscalePeer {
 		if !peer.Online {
 			continue
 		}
-		var ips []net.IP
-		for _, ipStr := range peer.TailscaleIPs {
-			if ip := net.ParseIP(ipStr); ip != nil {
-				if ip.To4() != nil {
-					ips = append(ips, ip)
-				}
+		seen := map[string]bool{}
+		addIPv4 := func(ipStr string) {
+			if seen[ipStr] {
+				return
 			}
+			ip := net.ParseIP(ipStr)
+			if ip == nil || ip.To4() == nil {
+				return
+			}
+			seen[ipStr] = true
+			peers[len(peers)-1].IPs = append(peers[len(peers)-1].IPs, ip)
 		}
-		if len(ips) > 0 {
-			peers = append(peers, tailscalePeer{Name: peer.HostName, IPs: ips})
+		peers = append(peers, tailscalePeer{Name: peer.HostName})
+		for _, ipStr := range peer.TailscaleIPs {
+			addIPv4(ipStr)
+		}
+		for _, addr := range peer.Addrs {
+			host, _, err := net.SplitHostPort(addr)
+			if err != nil {
+				continue
+			}
+			addIPv4(host)
+		}
+		if len(peers[len(peers)-1].IPs) == 0 {
+			peers = peers[:len(peers)-1]
 		}
 	}
 	return peers
