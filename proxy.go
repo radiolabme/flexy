@@ -507,7 +507,10 @@ func handleSmartSDRClient(clientConn net.Conn) {
 				return
 			}
 		}
-		radioConn.Close()
+		// Unblock the radio→client scanner so the deferred cleanup can still
+		// write to radioConn before it is closed. Using SetReadDeadline instead
+		// of Close() keeps the connection open for the cleanup writes.
+		radioConn.SetReadDeadline(time.Now())
 	}()
 
 	// radio → client: rewrite the radio's own IP in info responses so SmartSDR
