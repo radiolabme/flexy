@@ -377,6 +377,15 @@ func startDiscoveryRelay(ctx context.Context, proxyIP string) {
 // udpPortRe matches FlexRadio "client udpport N" commands in the TCP stream.
 var udpPortRe = regexp.MustCompile(`^(C\d+\|client udpport )(\d+)\s*$`)
 
+// emptyBindRe matches "client bind client_id=" with nothing after the equals,
+// which SmartSDR CAT sends at startup before it knows which station to bind to.
+// Forwarding it causes the radio to clear the station list for all clients.
+var emptyBindRe = regexp.MustCompile(`^C\d+\|client bind client_id=\s*$`)
+
+// pingLineRe matches FlexRadio ping commands and their responses so they can
+// be excluded from debug logging (they fire every few seconds and are noisy).
+var pingLineRe = regexp.MustCompile(`^C\d+\|ping$|^R\d+\|0\|ping$`)
+
 // regexes for tracking client-owned pans and slices for cleanup on disconnect.
 var (
 	proxyHandleRe    = regexp.MustCompile(`^H([0-9A-Fa-f]+)$`)
@@ -519,7 +528,13 @@ func handleSmartSDRClient(clientConn net.Conn) {
 		scanner := bufio.NewScanner(clientConn)
 		for scanner.Scan() {
 			line := scanner.Text()
-			log.Debug().Str("ctx", "proxy").Str("proto", "TCP").Str("dir", "→").Str("line", line).Msg("proxy cmd")
+			if !pingLineRe.MatchString(line) {
+				log.Debug().Str("ctx", "proxy").Str("proto", "TCP").Str("dir", "→").Str("line", line).Msg("proxy cmd")
+			}
+			if emptyBindRe.MatchString(line) {
+				log.Debug().Str("ctx", "proxy").Str("line", line).Msg("Suppressed empty client bind")
+				continue
+			}
 			if m := udpPortRe.FindStringSubmatch(line); m != nil {
 				clientPort, _ := strconv.Atoi(m[2])
 				if clientPort == 0 {
@@ -577,7 +592,9 @@ func handleSmartSDRClient(clientConn net.Conn) {
 				ownedSlices[m[1]] = struct{}{}
 			}
 		}
-		log.Debug().Str("ctx", "proxy").Str("proto", "TCP").Str("dir", "←").Str("line", line).Msg("proxy resp")
+		if !pingLineRe.MatchString(line) {
+			log.Debug().Str("ctx", "proxy").Str("proto", "TCP").Str("dir", "←").Str("line", line).Msg("proxy resp")
+		}
 		if _, err := fmt.Fprintf(clientConn, "%s\n", line); err != nil {
 			break
 		}
