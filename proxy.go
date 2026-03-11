@@ -58,6 +58,13 @@ var clientIPRespRe = regexp.MustCompile(`^(R)(\d+)(\|0\|)(\S+)\s*$`)
 // clientProgramRe extracts the program name from "client program <name>".
 var clientProgramRe = regexp.MustCompile(`^C\d+\|client program (.+)$`)
 
+// clientProgramRewriteRe captures the prefix and program name so the proxy
+// can rewrite unrecognised program names (e.g. "CAT") to ones the radio
+// accepts with 00000000.  Per the API docs the 10000002 "unknown client
+// program" response is informational, but companion apps (SmartCAT/SmartDAX)
+// treat the non-zero code as fatal and stall their state machines.
+var clientProgramRewriteRe = regexp.MustCompile(`^(C\d+\|client program )(.+)$`)
+
 // clientStationRe extracts the station name from "client station <name>".
 var clientStationRe = regexp.MustCompile(`^C\d+\|client station (.+)$`)
 
@@ -410,10 +417,13 @@ func startDiscoveryRelay(ctx context.Context, proxyIP string) {
 // udpPortRe matches FlexRadio "client udpport N" commands in the TCP stream.
 var udpPortRe = regexp.MustCompile(`^(C\d+\|client udpport )(\d+)\s*$`)
 
-// emptyBindRe matches "client bind client_id=" with nothing after the equals,
+// emptyBindRe matches "client bind client_id=" with nothing after the equals.
+// Per the API docs, bind "performs no function in the radio" (debug-only),
+// but an empty bind empirically clears the station list for all connected
+// clients — so we suppress it and inject a fake R-response.
 // which SmartSDR CAT sends at startup before it knows which station to bind to.
 // Forwarding it causes the radio to clear the station list for all clients.
-var emptyBindRe = regexp.MustCompile(`^C\d+\|client bind client_id=\s*$`)
+var emptyBindRe = regexp.MustCompile(`^C(\d+)\|client bind client_id=\s*$`)
 
 // pingLineRe matches FlexRadio ping commands and their responses so they can
 // be excluded from debug logging (they fire every few seconds and are noisy).
@@ -574,8 +584,13 @@ func handleSmartSDRClient(clientConn net.Conn) {
 			if cfg.LogPings || !pingLineRe.MatchString(line) {
 				log.Debug().Str("ctx", "proxy").Str("proto", "TCP").Str("dir", "→").Str("line", line).Msg("proxy cmd")
 			}
-			if emptyBindRe.MatchString(line) {
-				log.Info().Str("ctx", "proxy").Str("line", line).Msg("Empty client bind (passing through)")
+			if m := emptyBindRe.FindStringSubmatch(line); m != nil {
+				// Suppress: sending an empty bind clears the station list for
+				// all connected clients.  Inject a fake success response so the
+				// companion app's state machine can proceed.
+				log.Info().Str("ctx", "proxy").Str("line", line).Msg("Suppressed empty client bind; injecting R-response")
+				fmt.Fprintf(clientConn, "R%s|0|\n", m[1])
+				continue
 			}
 			// Track "client ip" command seq for response rewrite.
 			if m := clientIPCmdRe.FindStringSubmatch(line); m != nil {
@@ -583,9 +598,21 @@ func handleSmartSDRClient(clientConn net.Conn) {
 				clientIPSeqs[m[1]] = true
 				clientIPSeqMu.Unlock()
 			}
-			// Track client program and station for RadioContext metadata.
-			if m := clientProgramRe.FindStringSubmatch(line); m != nil {
-				pc.Program = strings.ReplaceAll(m[1], "\x7f", " ")
+			// Rewrite unrecognised program names so the radio responds with
+			// 00000000 (OK) instead of 10000002 (informational "unknown").
+			// Companion apps treat the non-zero code as fatal.
+			if m := clientProgramRewriteRe.FindStringSubmatch(line); m != nil {
+				prog := m[2]
+				switch prog {
+				case "DAX", "SmartSDR-Win", "SmartSDR-M":
+					// already accepted
+				default:
+					log.Info().Str("ctx", "proxy").Str("original", prog).Str("rewritten", "SmartSDR-Win").
+						Msg("Rewriting unrecognised client program")
+					line = m[1] + "SmartSDR-Win"
+					prog = "SmartSDR-Win"
+				}
+				pc.Program = strings.ReplaceAll(prog, "\x7f", " ")
 			}
 			if m := clientStationRe.FindStringSubmatch(line); m != nil {
 				pc.Station = strings.ReplaceAll(m[1], "\x7f", " ")

@@ -262,19 +262,47 @@ func TestEmptyBindRe(t *testing.T) {
 	tests := []struct {
 		line  string
 		match bool
+		seq   string // expected captured sequence number
 	}{
-		// Empty bind — detected and logged but passed through to radio.
-		{"C5|client bind client_id=", true},
-		{"C12|client bind client_id=", true},
+		// Empty bind — suppressed by proxy, fake R-response injected.
+		{"C5|client bind client_id=", true, "5"},
+		{"C12|client bind client_id=", true, "12"},
 		// Valid bind — must NOT match.
-		{"C5|client bind client_id=A1B2C3D4-E5F6-7890-ABCD-EF1234567890", false},
+		{"C5|client bind client_id=A1B2C3D4-E5F6-7890-ABCD-EF1234567890", false, ""},
 		// Other commands.
-		{"C3|client ip", false},
+		{"C3|client ip", false, ""},
 	}
 	for _, tt := range tests {
-		got := emptyBindRe.MatchString(tt.line)
+		m := emptyBindRe.FindStringSubmatch(tt.line)
+		got := m != nil
 		if got != tt.match {
-			t.Errorf("emptyBindRe.MatchString(%q) = %v, want %v", tt.line, got, tt.match)
+			t.Errorf("emptyBindRe on %q: got match=%v, want %v", tt.line, got, tt.match)
+		}
+		if got && m[1] != tt.seq {
+			t.Errorf("emptyBindRe on %q: got seq=%q, want %q", tt.line, m[1], tt.seq)
+		}
+	}
+}
+
+func TestClientProgramRewrite(t *testing.T) {
+	tests := []struct {
+		line    string
+		match   bool
+		program string
+	}{
+		{"C4|client program CAT", true, "CAT"},
+		{"C5|client program SmartSDR-Win", true, "SmartSDR-Win"},
+		{"C6|client program DAX", true, "DAX"},
+		{"C3|client ip", false, ""},
+	}
+	for _, tt := range tests {
+		m := clientProgramRewriteRe.FindStringSubmatch(tt.line)
+		got := m != nil
+		if got != tt.match {
+			t.Errorf("clientProgramRewriteRe on %q: got match=%v, want %v", tt.line, got, tt.match)
+		}
+		if got && m[2] != tt.program {
+			t.Errorf("clientProgramRewriteRe on %q: got program=%q, want %q", tt.line, m[2], tt.program)
 		}
 	}
 }
