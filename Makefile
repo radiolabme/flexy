@@ -1,6 +1,7 @@
 BINARY   := flexy
 DISCOVERY := flexy-discovery
 BIN      := bin
+DLDIR    := cmd/flexy/web/downloads
 VERSION  := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS  := -ldflags "-X main.Version=$(VERSION)"
 
@@ -8,7 +9,7 @@ LDFLAGS  := -ldflags "-X main.Version=$(VERSION)"
 PROXY_PLATFORMS     := linux-amd64 linux-arm64 darwin-amd64 darwin-arm64
 DISCOVERY_PLATFORMS := linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64 windows-arm64
 
-.PHONY: all release proxy discovery clean \
+.PHONY: all release proxy discovery embed-downloads clean \
 	$(addprefix proxy-,$(PROXY_PLATFORMS)) \
 	$(addprefix discovery-,$(DISCOVERY_PLATFORMS))
 
@@ -17,8 +18,17 @@ all:
 	go build $(LDFLAGS) -o $(BIN)/$(BINARY) ./cmd/flexy
 	go build -o $(BIN)/$(DISCOVERY) ./cmd/flexy-discovery
 
-# Cross-compile everything.
-release: proxy discovery
+# Cross-compile everything. Embeds discovery binaries into the proxy.
+release: embed-downloads proxy discovery
+
+# Build discovery binaries into web/downloads/ so they get embedded in the proxy.
+embed-downloads:
+	@mkdir -p $(DLDIR)
+	$(foreach p,$(DISCOVERY_PLATFORMS),\
+		$(eval _OS   := $(word 1,$(subst -, ,$(p))))\
+		$(eval _ARCH := $(word 2,$(subst -, ,$(p))))\
+		$(eval _EXT  := $(if $(filter windows,$(_OS)),.exe,))\
+		GOOS=$(_OS) GOARCH=$(_ARCH) go build -o $(DLDIR)/$(DISCOVERY)-$(p)$(_EXT) ./cmd/flexy-discovery ;)
 
 proxy: $(addprefix proxy-,$(PROXY_PLATFORMS))
 discovery: $(addprefix discovery-,$(DISCOVERY_PLATFORMS))
@@ -59,4 +69,4 @@ install-arm64: proxy-linux-arm64
 	ssh $(HOST) "systemctl daemon-reload && systemctl enable flexy && systemctl restart flexy"
 
 clean:
-	rm -rf $(BIN)
+	rm -rf $(BIN) $(DLDIR)

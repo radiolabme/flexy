@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"io/fs"
 	"net"
 	"net/http"
 	"strconv"
@@ -23,6 +24,7 @@ func runWebServer(ctx context.Context, listen string) {
 	mux.HandleFunc("/api/contexts", handleAPIContexts)
 	mux.HandleFunc("/api/logs", handleAPILogs)
 	mux.HandleFunc("/api/connections", handleAPIConnections)
+	mux.HandleFunc("/api/downloads", handleAPIDownloads)
 	mux.Handle("/", http.FileServer(http.FS(webFS)))
 
 	srv := &http.Server{
@@ -328,4 +330,25 @@ func handleAPIConnections(w http.ResponseWriter, r *http.Request) {
 		resp["proxyContext"] = rc.Snapshot()
 	}
 	json.NewEncoder(w).Encode(resp)
+}
+
+func handleAPIDownloads(w http.ResponseWriter, r *http.Request) {
+	type dlEntry struct {
+		Name string `json:"name"`
+		Size int64  `json:"size"`
+	}
+	var files []dlEntry
+	fs.WalkDir(webFS, "downloads", func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return nil
+		}
+		files = append(files, dlEntry{Name: d.Name(), Size: info.Size()})
+		return nil
+	})
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(files)
 }

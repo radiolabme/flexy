@@ -359,6 +359,7 @@ button:active { opacity: 0.7; }
 
 <nav class="tabs">
   <button class="tab-btn active" data-tab="overview">Overview</button>
+  <button class="tab-btn" data-tab="downloads">Downloads</button>
   <button class="tab-btn" data-tab="logs">Logs</button>
 </nav>
 
@@ -541,6 +542,16 @@ button:active { opacity: 0.7; }
 
 </div><!-- end tab-overview -->
 
+<!-- ===== DOWNLOADS TAB ===== -->
+<div id="tab-downloads" class="tab-panel">
+  <div class="card">
+    <h2>flexy-discovery</h2>
+    <p style="color:var(--muted);margin-bottom:1rem">Receives unicast discovery from Flexy and re-broadcasts on your local network so SmartSDR, Smart CAT, and Smart DAX can find the radio.</p>
+    <div id="dl-list" style="margin-bottom:1rem"><span style="color:var(--muted)">Loading&hellip;</span></div>
+    <p style="color:var(--muted);font-size:0.85em">Run: <code style="color:var(--green)">flexy-discovery -allow-from 100.64.0.0/10</code></p>
+  </div>
+</div>
+
 <!-- ===== LOGS TAB ===== -->
 <div id="tab-logs" class="tab-panel">
   <div id="log-controls">
@@ -576,6 +587,36 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 function esc(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
+
+function formatBytes(b) {
+  if (b < 1024) return b + ' B';
+  if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
+  return (b / 1048576).toFixed(1) + ' MB';
+}
+
+// ---- Downloads ----
+(async function loadDownloads() {
+  const el = document.getElementById('dl-list');
+  try {
+    const res = await fetch('/api/downloads');
+    const files = await res.json();
+    if (!files || files.length === 0) {
+      el.innerHTML = '<span style="color:var(--muted)">No binaries embedded. Build with <code style="color:var(--green)">make release</code> to include them.</span>';
+      return;
+    }
+    const rows = files.map(f => {
+      const parts = f.name.replace(/\.exe$/, '').split('-');
+      const os = parts[2] || '';
+      const arch = parts[3] || '';
+      const label = os + '/' + arch + (f.name.endsWith('.exe') ? ' (.exe)' : '');
+      return '<a href="/downloads/' + esc(f.name) + '" style="display:inline-block;padding:0.4rem 0.8rem;margin:0.25rem;background:var(--surface);border:1px solid var(--border);border-radius:4px;color:var(--blue);text-decoration:none">'
+        + esc(label) + ' <span style="color:var(--muted);font-size:0.85em">' + formatBytes(f.size) + '</span></a>';
+    });
+    el.innerHTML = rows.join('');
+  } catch (e) {
+    el.innerHTML = '<span style="color:var(--red)">Failed to load downloads</span>';
+  }
+})();
 
 function formatFreqMHz(mhzStr) {
   const mhz = parseFloat(mhzStr);

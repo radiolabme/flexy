@@ -1,4 +1,5 @@
 bin/
+cmd/flexy/web/downloads/
 nCAT
 *.log
 .DS_Store
