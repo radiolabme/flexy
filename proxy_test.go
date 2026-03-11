@@ -263,7 +263,7 @@ func TestEmptyBindRe(t *testing.T) {
 		line  string
 		match bool
 	}{
-		// Empty bind — should be suppressed by the proxy.
+		// Empty bind — detected and logged but passed through to radio.
 		{"C5|client bind client_id=", true},
 		{"C12|client bind client_id=", true},
 		// Valid bind — must NOT match.

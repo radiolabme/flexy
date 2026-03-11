@@ -575,8 +575,7 @@ func handleSmartSDRClient(clientConn net.Conn) {
 				log.Debug().Str("ctx", "proxy").Str("proto", "TCP").Str("dir", "→").Str("line", line).Msg("proxy cmd")
 			}
 			if emptyBindRe.MatchString(line) {
-				log.Info().Str("ctx", "proxy").Str("line", line).Msg("Suppressed empty client bind")
-				continue
+				log.Info().Str("ctx", "proxy").Str("line", line).Msg("Empty client bind (passing through)")
 			}
 			// Track "client ip" command seq for response rewrite.
 			if m := clientIPCmdRe.FindStringSubmatch(line); m != nil {
