@@ -7,42 +7,64 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"net"
 	"os"
 	"os/signal"
+	"runtime"
 	"strings"
 
 	"github.com/rs/zerolog"
 	log "github.com/rs/zerolog/log"
 )
 
+// waitOnWindows pauses for a keypress so double-clicked .exe windows
+// don't vanish before the user can read the output.
+func waitOnWindows() {
+	if runtime.GOOS != "windows" {
+		return
+	}
+	fmt.Fprintln(os.Stderr, "\nPress Enter to exit...")
+	buf := make([]byte, 1)
+	os.Stdin.Read(buf) //nolint:errcheck
+}
+
 func main() {
+	defer waitOnWindows()
+
 	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
 	log.Logger = zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr}).With().Timestamp().Logger()
 
+	if err := run(); err != nil {
+		log.Error().Err(err).Msg("fatal")
+		return
+	}
+}
+
+func run() error {
 	listenAddr := flag.String("listen", ":4992", "UDP address to listen on")
 	allowFrom := flag.String("allow-from", "100.64.0.0/10", "CIDR of trusted source IPs (default: Tailscale CGNAT range)")
 	flag.Parse()
 
 	_, allowNet, err := net.ParseCIDR(*allowFrom)
 	if err != nil {
-		log.Fatal().Err(err).Msg("bad -allow-from CIDR")
+		return fmt.Errorf("bad -allow-from CIDR: %w", err)
 	}
 
 	addr, err := net.ResolveUDPAddr("udp4", *listenAddr)
 	if err != nil {
-		log.Fatal().Err(err).Msg("resolve listen address")
+		return fmt.Errorf("resolve listen address: %w", err)
 	}
 
 	recvConn, err := net.ListenUDP("udp4", addr)
 	if err != nil {
-		log.Fatal().Err(err).Str("addr", addr.String()).Msg("listen failed")
+		return fmt.Errorf("listen on %s: %w", addr, err)
 	}
 	defer recvConn.Close()
 
 	sendConn, err := net.ListenUDP("udp4", &net.UDPAddr{})
 	if err != nil {
-		log.Fatal().Err(err).Msg("open send socket")
+		return fmt.Errorf("open send socket: %w", err)
 	}
 	defer sendConn.Close()
 
@@ -92,4 +114,5 @@ func main() {
 	}
 
 	log.Info().Uint64("relayed", relayed).Uint64("dropped", dropped).Msg("exiting")
+	return nil
 }
