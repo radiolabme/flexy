@@ -32,6 +32,7 @@ type Config struct {
 	ChkVFOMode       string
 	Metering         bool
 	LogPings         bool
+	ProxyOnly        bool
 	UDPPort          int
 }
 
@@ -53,6 +54,7 @@ func init() {
 	flag.StringVar(&cfg.ChkVFOMode, "chkvfo-mode", "new", "chkvfo syntax (old,new)")
 	flag.BoolVar(&cfg.Metering, "metering", true, "support reading meters from radio")
 	flag.BoolVar(&cfg.LogPings, "log-pings", false, "include ping/pong lines in proxy debug logs")
+	flag.BoolVar(&cfg.ProxyOnly, "proxy-only", false, "run only the proxy/web UI; skip flexclient radio connection")
 }
 
 var fc *flexclient.FlexClient
@@ -314,38 +316,43 @@ func main() {
 		}()
 	}
 
-	// Connection loop: reconnects when signaled via web UI or after a failure.
-	for {
-		connCtx, connCancel := context.WithCancel(rootCtx)
+	if cfg.ProxyOnly {
+		log.Info().Msg("Running in proxy-only mode; flexclient radio connection disabled")
+		<-rootCtx.Done()
+	} else {
+		// Connection loop: reconnects when signaled via web UI or after a failure.
+		for {
+			connCtx, connCancel := context.WithCancel(rootCtx)
 
-		// Fan reconnectCh into connCancel so a web-triggered reconnect
-		// gracefully tears down the current runRadio call.
-		go func() {
-			select {
-			case <-reconnectCh:
-				log.Info().Msg("Reconnect requested")
-				connCancel()
-			case <-connCtx.Done():
+			// Fan reconnectCh into connCancel so a web-triggered reconnect
+			// gracefully tears down the current runRadio call.
+			go func() {
+				select {
+				case <-reconnectCh:
+					log.Info().Msg("Reconnect requested")
+					connCancel()
+				case <-connCtx.Done():
+				}
+			}()
+
+			err := runRadio(connCtx)
+			connCancel() // always cancel to release the fan-out goroutine
+
+			if rootCtx.Err() != nil {
+				break
 			}
-		}()
 
-		err := runRadio(connCtx)
-		connCancel() // always cancel to release the fan-out goroutine
-
-		if rootCtx.Err() != nil {
-			break
-		}
-
-		if err != nil && !errors.Is(err, context.Canceled) {
-			log.Error().Err(err).Msg("Radio connection failed; retrying in 5s")
-			select {
-			case <-time.After(5 * time.Second):
-			case <-rootCtx.Done():
+			if err != nil && !errors.Is(err, context.Canceled) {
+				log.Error().Err(err).Msg("Radio connection failed; retrying in 5s")
+				select {
+				case <-time.After(5 * time.Second):
+				case <-rootCtx.Done():
+				}
 			}
-		}
 
-		if rootCtx.Err() != nil {
-			break
+			if rootCtx.Err() != nil {
+				break
+			}
 		}
 	}
 
