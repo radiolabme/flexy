@@ -20,6 +20,7 @@ func runWebServer(ctx context.Context, listen string) {
 	mux.HandleFunc("/api/reconnect", handleAPIReconnect)
 	mux.HandleFunc("/api/network", handleAPINetwork)
 	mux.HandleFunc("/api/proxy", handleAPIProxy)
+	mux.HandleFunc("/api/contexts", handleAPIContexts)
 	mux.HandleFunc("/api/logs", handleAPILogs)
 	mux.HandleFunc("/api/connections", handleAPIConnections)
 	mux.Handle("/", http.FileServer(http.FS(webFS)))
@@ -95,8 +96,8 @@ func handleAPIStatus(w http.ResponseWriter, r *http.Request) {
 
 	state, errMsg := getConnState()
 	resp := map[string]interface{}{
-		"state":   state.String(),
-		"error":   errMsg,
+		"state":       state.String(),
+		"error":       errMsg,
 		"localIP":     getLocalIP(),
 		"meterPktsRx": meterPktsRx.Load(),
 	}
@@ -212,11 +213,16 @@ func handleAPINetwork(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	discoveryMu.RLock()
-	kv := lastDiscoveryKV
-	bcast := lastBcastAddr
-	unicastAddrs := lastUnicastAddrs
-	discoveryMu.RUnlock()
+	var kv map[string]string
+	var bcast string
+	var unicastAddrs []string
+	if rc := getRadioContext(); rc != nil {
+		rc.mu.RLock()
+		kv = rc.DiscoveryKV
+		bcast = rc.BroadcastAddrs
+		unicastAddrs = rc.UnicastAddrs
+		rc.mu.RUnlock()
+	}
 
 	resp := map[string]interface{}{
 		"interfaces":     ifaceList,
@@ -247,7 +253,24 @@ func handleAPIProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(snapshotProxyConns())
+	if rc := getRadioContext(); rc != nil {
+		json.NewEncoder(w).Encode(rc.Snapshot())
+	} else {
+		w.Write([]byte("null\n"))
+	}
+}
+
+func handleAPIContexts(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	var contexts []RadioContextSnapshot
+	if rc := getRadioContext(); rc != nil {
+		contexts = append(contexts, rc.Snapshot())
+	}
+	json.NewEncoder(w).Encode(contexts)
 }
 
 func handleAPILogs(w http.ResponseWriter, r *http.Request) {
@@ -276,14 +299,14 @@ func handleAPIConnections(w http.ResponseWriter, r *http.Request) {
 	state, errMsg := getConnState()
 
 	radioConn := map[string]interface{}{
-		"addr":        cfg.RadioIP,
-		"state":       state.String(),
-		"error":       errMsg,
-		"station":     cfg.Station,
-		"sliceLetter": cfg.Slice,
-		"sliceIdx":    SliceIdx,
+		"addr":         cfg.RadioIP,
+		"state":        state.String(),
+		"error":        errMsg,
+		"station":      cfg.Station,
+		"sliceLetter":  cfg.Slice,
+		"sliceIdx":     SliceIdx,
 		"clientHandle": ClientID,
-		"localIP":     getLocalIP(),
+		"localIP":      getLocalIP(),
 	}
 	if state == ConnStateConnected && fc != nil {
 		if slice, ok := fc.GetObject("slice " + SliceIdx); ok {
@@ -297,9 +320,12 @@ func handleAPIConnections(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	resp := map[string]interface{}{
 		"radioConn":   radioConn,
 		"hamlibConns": snapshotHamlibClients(),
-		"proxyConns":  snapshotProxyConns(),
-	})
+	}
+	if rc := getRadioContext(); rc != nil {
+		resp["proxyContext"] = rc.Snapshot()
+	}
+	json.NewEncoder(w).Encode(resp)
 }

@@ -48,12 +48,21 @@ func proxyBindIP() net.IP {
 	return net.ParseIP(cfg.RadioBindIP)
 }
 
-var (
-	discoveryMu       sync.RWMutex
-	lastDiscoveryKV   map[string]string
-	lastBcastAddr     string
-	lastUnicastAddrs  []string
-)
+// clientIPCmdRe matches a "client ip" command so we can track the sequence
+// number and rewrite the response with the real client IP.
+var clientIPCmdRe = regexp.MustCompile(`^C(\d+)\|client ip\s*$`)
+
+// clientIPRespRe matches the radio's response to "client ip".
+var clientIPRespRe = regexp.MustCompile(`^(R)(\d+)(\|0\|)(\S+)\s*$`)
+
+// clientProgramRe extracts the program name from "client program <name>".
+var clientProgramRe = regexp.MustCompile(`^C\d+\|client program (.+)$`)
+
+// clientStationRe extracts the station name from "client station <name>".
+var clientStationRe = regexp.MustCompile(`^C\d+\|client station (.+)$`)
+
+// clientStatusRe extracts fields from radio client status updates.
+var clientStatusRe = regexp.MustCompile(`\|client 0x([0-9A-Fa-f]+) connected .* client_id=([0-9A-Fa-f-]+)`)
 
 // parseDiscoveryPayload parses VITA-49 discovery packet key=value payload.
 // 0x7f is the FlexRadio-encoded space character and is decoded to a real space.
@@ -97,7 +106,7 @@ func buildDiscoveryPacket(kv map[string]string) []byte {
 
 	buf := make([]byte, 4+8+len(payload))
 	binary.BigEndian.PutUint32(buf[0:4], headerWord)
-	binary.BigEndian.PutUint32(buf[4:8], flexOUI)                  // OUI in low 24 bits
+	binary.BigEndian.PutUint32(buf[4:8], flexOUI)                     // OUI in low 24 bits
 	binary.BigEndian.PutUint32(buf[8:12], uint32(discoveryClassCode)) // PCC in low 16 bits
 	copy(buf[12:], payload)
 	return buf
@@ -165,8 +174,6 @@ func getBroadcastAddr(ip string) net.IP {
 	}
 	return net.IPv4bcast
 }
-
-
 
 // lanBroadcastAddrs returns the broadcast address for every non-Tailscale,
 // non-loopback, up IPv4 interface. Used so discovery reaches LAN clients
@@ -335,6 +342,13 @@ func startDiscoveryRelay(ctx context.Context, proxyIP string) {
 			kv["nickname"] = nick + " [Flexy]"
 		}
 
+		// Rewrite gui_client_ips so companion apps (Smart CAT, Smart DAX)
+		// can match their own IP against the discovery data and find the
+		// correct station to bind to.
+		if rc := getRadioContext(); rc != nil {
+			rc.RewriteDiscoveryIPs(kv)
+		}
+
 		pkt := buildDiscoveryPacket(kv)
 
 		bcastAddrs := lanBroadcastAddrs()
@@ -353,11 +367,9 @@ func startDiscoveryRelay(ctx context.Context, proxyIP string) {
 			unicastStrs = append(unicastStrs, peer.Name+" ("+strings.Join(ipStrs, ", ")+")")
 		}
 
-		discoveryMu.Lock()
-		lastDiscoveryKV = kv
-		lastBcastAddr = strings.Join(bcastStrs, ", ")
-		lastUnicastAddrs = unicastStrs
-		discoveryMu.Unlock()
+		if rc := getRadioContext(); rc != nil {
+			rc.SetDiscovery(kv, strings.Join(bcastStrs, ", "), unicastStrs)
+		}
 
 		for _, bcastIP := range bcastAddrs {
 			if _, err := sendConn.WriteTo(pkt, &net.UDPAddr{IP: bcastIP, Port: 4992}); err != nil {
@@ -388,8 +400,8 @@ var pingLineRe = regexp.MustCompile(`^C\d+\|ping$|^R\d+\|0\|ping$`)
 
 // regexes for tracking client-owned pans and slices for cleanup on disconnect.
 var (
-	proxyHandleRe    = regexp.MustCompile(`^H([0-9A-Fa-f]+)$`)
-	proxyPanOwnerRe  = regexp.MustCompile(`\|display pan (0x[0-9A-Fa-f]+) .*client_handle=0x([0-9A-Fa-f]+)`)
+	proxyHandleRe     = regexp.MustCompile(`^H([0-9A-Fa-f]+)$`)
+	proxyPanOwnerRe   = regexp.MustCompile(`\|display pan (0x[0-9A-Fa-f]+) .*client_handle=0x([0-9A-Fa-f]+)`)
 	proxySliceOwnerRe = regexp.MustCompile(`\|slice (\d+) .*client_handle=0x([0-9A-Fa-f]+)`)
 )
 
@@ -453,7 +465,8 @@ func startUDPRelay(bindIP net.IP, destIP string, destPort int, done <-chan struc
 }
 
 // handleSmartSDRClient proxies one SmartSDR TCP connection to the real radio,
-// intercepting client udpport commands to set up a VITA-49 UDP relay.
+// intercepting client udpport commands to set up a VITA-49 UDP relay, and
+// rewriting IP references so companion apps can resolve stations correctly.
 func handleSmartSDRClient(clientConn net.Conn) {
 	defer clientConn.Close()
 
@@ -480,50 +493,59 @@ func handleSmartSDRClient(clientConn net.Conn) {
 		Bool("tailscale", isTailscaleIP(localTCPAddr.IP)).
 		Msg("Proxy TCP local address (radio will send UDP here)")
 
-	conn := registerProxyConn(clientAddr.String(), radioAddr)
-	defer unregisterProxyConn(conn)
-
 	done := make(chan struct{})
 	defer close(done)
 
-	// Track client-owned pans and slices so we can remove them on disconnect.
-	// This forces SmartSDR to do a full re-init (including client udpport) on
-	// the next connection instead of silently restoring a stale session.
-	var myHandle string
-	ownedPans := map[string]struct{}{}
-	ownedSlices := map[string]struct{}{}
+	// ProxyClient will be registered in RadioContext once we learn our handle.
+	pc := &ProxyClient{
+		RemoteIP:    clientAddr.IP,
+		RemoteAddr:  clientAddr.String(),
+		ConnectedAt: time.Now(),
+		OwnedPans:   make(map[string]struct{}),
+		OwnedSlices: make(map[string]struct{}),
+	}
+
 	defer func() {
-		if myHandle == "" || (len(ownedPans) == 0 && len(ownedSlices) == 0) {
+		// Unregister from RadioContext.
+		if pc.Handle != "" {
+			if rc := getRadioContext(); rc != nil {
+				rc.UnregisterClient(pc.Handle)
+			}
+		}
+		// Cleanup owned resources.
+		if pc.Handle == "" || (len(pc.OwnedPans) == 0 && len(pc.OwnedSlices) == 0) {
 			return
 		}
-		// Skip cleanup if other proxy clients (DAX, CAT, etc.) are still
-		// connected — they may be bound to this client's pans/slices and
-		// removing them would disrupt the active session and cause their
-		// station pickers to go blank. Cleanup only matters when this is
-		// the sole client, to prevent the next connection from silently
-		// restoring a stale session and skipping client udpport.
-		proxyConnsMu.RLock()
-		otherConns := len(proxyConns) > 1
-		proxyConnsMu.RUnlock()
-		if otherConns {
-			log.Info().Str("ctx", "proxy").Str("handle", myHandle).
-				Msg("Proxy cleanup skipped: other clients still connected")
-			return
+		// Skip cleanup if other proxy clients are still connected to this radio.
+		if rc := getRadioContext(); rc != nil {
+			rc.mu.RLock()
+			otherConns := len(rc.Clients) > 0
+			rc.mu.RUnlock()
+			if otherConns {
+				log.Info().Str("ctx", "proxy").Str("handle", pc.Handle).
+					Msg("Proxy cleanup skipped: other clients still connected")
+				return
+			}
 		}
-		log.Info().Str("ctx", "proxy").Str("handle", myHandle).
-			Int("pans", len(ownedPans)).Int("slices", len(ownedSlices)).
+		log.Info().Str("ctx", "proxy").Str("handle", pc.Handle).
+			Int("pans", len(pc.OwnedPans)).Int("slices", len(pc.OwnedSlices)).
 			Msg("Proxy cleanup: removing client pans and slices on disconnect")
 		_ = radioConn.SetWriteDeadline(time.Now().Add(2 * time.Second))
-		for pan := range ownedPans {
+		for pan := range pc.OwnedPans {
 			fmt.Fprintf(radioConn, "display pan remove %s\n", pan)
 		}
-		for slice := range ownedSlices {
+		for slice := range pc.OwnedSlices {
 			fmt.Fprintf(radioConn, "slice remove %s\n", slice)
 		}
 		_ = radioConn.SetWriteDeadline(time.Time{})
 	}()
 
-	// client → radio: scan line by line, intercept udpport commands.
+	// Track "client ip" command sequence numbers so we can rewrite the
+	// response with the real client IP instead of the proxy LAN IP.
+	var clientIPSeqMu sync.Mutex
+	clientIPSeqs := map[string]bool{}
+
+	// client → radio: scan line by line, intercept udpport and track metadata.
 	go func() {
 		scanner := bufio.NewScanner(clientConn)
 		for scanner.Scan() {
@@ -532,20 +554,32 @@ func handleSmartSDRClient(clientConn net.Conn) {
 				log.Debug().Str("ctx", "proxy").Str("proto", "TCP").Str("dir", "→").Str("line", line).Msg("proxy cmd")
 			}
 			if emptyBindRe.MatchString(line) {
-				log.Debug().Str("ctx", "proxy").Str("line", line).Msg("Suppressed empty client bind")
+				log.Info().Str("ctx", "proxy").Str("line", line).Msg("Suppressed empty client bind")
 				continue
+			}
+			// Track "client ip" command seq for response rewrite.
+			if m := clientIPCmdRe.FindStringSubmatch(line); m != nil {
+				clientIPSeqMu.Lock()
+				clientIPSeqs[m[1]] = true
+				clientIPSeqMu.Unlock()
+			}
+			// Track client program and station for RadioContext metadata.
+			if m := clientProgramRe.FindStringSubmatch(line); m != nil {
+				pc.Program = strings.ReplaceAll(m[1], "\x7f", " ")
+			}
+			if m := clientStationRe.FindStringSubmatch(line); m != nil {
+				pc.Station = strings.ReplaceAll(m[1], "\x7f", " ")
 			}
 			if m := udpPortRe.FindStringSubmatch(line); m != nil {
 				clientPort, _ := strconv.Atoi(m[2])
 				if clientPort == 0 {
-					// Port 0 is a deregister request — pass through unchanged.
 					log.Debug().Str("ctx", "proxy").Str("proto", "UDP").Msg("UDP deregister (port 0): passing through")
 				} else {
 					localPort, counter, err := startUDPRelay(bindIP, clientAddr.IP.String(), clientPort, done)
 					if err != nil {
 						log.Error().Err(err).Msg("SmartSDR proxy: UDP relay setup failed")
 					} else {
-						conn.setRelay(counter)
+						pc.Relay = counter
 						log.Info().
 							Str("ctx", "proxy").Str("proto", "UDP").
 							Str("client", fmt.Sprintf("%s:%d", clientAddr.IP, clientPort)).
@@ -559,14 +593,11 @@ func handleSmartSDRClient(clientConn net.Conn) {
 				return
 			}
 		}
-		// Unblock the radio→client scanner so the deferred cleanup can still
-		// write to radioConn before it is closed. Using SetReadDeadline instead
-		// of Close() keeps the connection open for the cleanup writes.
 		radioConn.SetReadDeadline(time.Now())
 	}()
 
-	// radio → client: rewrite the radio's own IP in info responses so SmartSDR
-	// sees an IP consistent with what it connected to and doesn't drop the session.
+	// radio → client: rewrite IPs so SmartSDR and companion apps see
+	// consistent addresses matching what they connected to.
 	proxyIPStr := cfg.ProxyIP
 	if proxyIPStr == "" {
 		proxyIPStr = getLocalIP()
@@ -578,20 +609,53 @@ func handleSmartSDRClient(clientConn net.Conn) {
 		if proxyIPStr != "" && cfg.RadioIP != "" {
 			line = strings.ReplaceAll(line, "ip="+cfg.RadioIP, "ip="+proxyIPStr)
 		}
-		// Track handle and owned pans/slices for cleanup on disconnect.
-		if myHandle == "" {
+
+		// Rewrite "client ip" response: replace proxy LAN IP with real client IP.
+		if m := clientIPRespRe.FindStringSubmatch(line); m != nil {
+			seq := m[2]
+			clientIPSeqMu.Lock()
+			isClientIP := clientIPSeqs[seq]
+			delete(clientIPSeqs, seq)
+			clientIPSeqMu.Unlock()
+			if isClientIP {
+				oldIP := m[4]
+				newIP := clientAddr.IP.String()
+				if oldIP != newIP {
+					line = m[1] + m[2] + m[3] + newIP
+					log.Debug().Str("ctx", "proxy").
+						Str("old_ip", oldIP).Str("new_ip", newIP).
+						Msg("Rewrote client ip response")
+				}
+			}
+		}
+
+		// Track handle from the H-line and register in RadioContext.
+		if pc.Handle == "" {
 			if m := proxyHandleRe.FindStringSubmatch(line); m != nil {
-				myHandle = strings.ToUpper(m[1])
+				pc.Handle = strings.ToUpper(m[1])
+				if rc := getRadioContext(); rc != nil {
+					rc.RegisterClient(pc)
+				}
+				log.Info().Str("ctx", "proxy").
+					Str("handle", pc.Handle).
+					Str("client", clientAddr.String()).
+					Msg("Proxy client handle assigned")
 			}
 		}
-		if myHandle != "" {
-			if m := proxyPanOwnerRe.FindStringSubmatch(line); m != nil && strings.EqualFold(m[2], myHandle) {
-				ownedPans[m[1]] = struct{}{}
+
+		// Track client_id from radio status updates.
+		if pc.Handle != "" {
+			if m := clientStatusRe.FindStringSubmatch(line); m != nil && strings.EqualFold(m[1], pc.Handle) {
+				pc.ClientID = m[2]
 			}
-			if m := proxySliceOwnerRe.FindStringSubmatch(line); m != nil && strings.EqualFold(m[2], myHandle) {
-				ownedSlices[m[1]] = struct{}{}
+			if m := proxyPanOwnerRe.FindStringSubmatch(line); m != nil && strings.EqualFold(m[2], pc.Handle) {
+				pc.OwnedPans[m[1]] = struct{}{}
+			}
+			if m := proxySliceOwnerRe.FindStringSubmatch(line); m != nil && strings.EqualFold(m[2], pc.Handle) {
+				pc.OwnedSlices[m[1]] = struct{}{}
 			}
 		}
+
 		if !pingLineRe.MatchString(line) {
 			log.Debug().Str("ctx", "proxy").Str("proto", "TCP").Str("dir", "←").Str("line", line).Msg("proxy resp")
 		}
@@ -605,6 +669,13 @@ func handleSmartSDRClient(clientConn net.Conn) {
 
 // startSmartSDRProxy listens for SmartSDR TCP connections and proxies them.
 func startSmartSDRProxy(ctx context.Context, listen string) {
+	proxyIP := cfg.ProxyIP
+	if proxyIP == "" {
+		proxyIP = getLocalIP()
+	}
+	rc := NewRadioContext(cfg.RadioIP, getLocalIP(), proxyIP)
+	setRadioContext(rc)
+
 	l, err := net.Listen("tcp", listen)
 	if err != nil {
 		log.Error().Err(err).Str("addr", listen).Msg("SmartSDR proxy: failed to listen")

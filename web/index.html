@@ -422,8 +422,8 @@ button:active { opacity: 0.7; }
     <h2>SmartSDR Proxy</h2>
     <div class="proxy-listen" id="proxy-listen-line">Proxy disabled</div>
     <table id="proxy-table">
-      <thead><tr><th>Client</th><th>Radio</th><th>UDP Relay Port</th><th>Packets Rx</th><th>Last Packet</th><th>Status</th></tr></thead>
-      <tbody id="proxy-tbody"><tr><td colspan="6" class="tag-muted">No active connections</td></tr></tbody>
+      <thead><tr><th>Client</th><th>Handle</th><th>Program</th><th>Station</th><th>UDP Relay</th><th>Packets</th><th>Last Packet</th><th>Status</th></tr></thead>
+      <tbody id="proxy-tbody"><tr><td colspan="8" class="tag-muted">No active connections</td></tr></tbody>
     </table>
   </div>
 </div>
@@ -680,12 +680,12 @@ function pollConnections() {
 
       // Column 3: Proxy clients
       const proxyConnEl = document.getElementById('proxy-conn-section');
-      const proxyConns = d.proxyConns || [];
-      if (proxyConns.length === 0) {
+      const proxyClients = d.proxyContext ? (d.proxyContext.clients || []) : [];
+      if (proxyClients.length === 0) {
         proxyConnEl.innerHTML = '<span class="tag-muted" style="font-size:0.85em">No proxy connections</span>';
       } else {
-        let tbl = '<table><thead><tr><th>Client</th><th>Radio</th><th>UDP relay</th><th>Pkts</th><th>Status</th></tr></thead><tbody>';
-        for (const c of proxyConns) {
+        let tbl = '<table><thead><tr><th>Client</th><th>Program</th><th>Station</th><th>UDP</th><th>Status</th></tr></thead><tbody>';
+        for (const c of proxyClients) {
           const relay = c.udpRelay;
           const pkts  = relay ? (relay.packetsRx || 0) : 0;
           const last  = relay ? relay.lastPacket : null;
@@ -700,12 +700,11 @@ function pollConnections() {
               ? '<span class="tag-green">flowing</span>'
               : '<span class="tag-yellow">stalled</span>';
           }
-          const relayPort = relay ? esc(relay.relayPort) : '<span class="tag-muted">—</span>';
           tbl += `<tr>
-            <td>${esc(c.clientAddr)}</td>
-            <td>${esc(c.radioAddr)}</td>
-            <td>${relayPort}</td>
-            <td>${pkts.toLocaleString()}</td>
+            <td>${esc(c.remoteAddr)}</td>
+            <td>${c.program ? esc(c.program) : '<span class="tag-muted">—</span>'}</td>
+            <td>${c.station ? esc(c.station) : '<span class="tag-muted">—</span>'}</td>
+            <td>${pkts > 0 ? pkts.toLocaleString() : '<span class="tag-muted">—</span>'}</td>
             <td>${statusHtml}</td>
           </tr>`;
         }
@@ -797,13 +796,14 @@ function pollNetwork() {
 function pollProxy() {
   fetch('/api/proxy')
     .then(r => r.json())
-    .then(conns => {
+    .then(ctx => {
       const tbody = document.getElementById('proxy-tbody');
-      if (!conns || conns.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="6" class="tag-muted">No active connections</td></tr>';
+      const clients = ctx ? (ctx.clients || []) : [];
+      if (clients.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" class="tag-muted">No active connections</td></tr>';
         return;
       }
-      tbody.innerHTML = conns.map(c => {
+      tbody.innerHTML = clients.map(c => {
         const relay = c.udpRelay;
         const pkts  = relay ? relay.packetsRx : 0;
         const last  = relay ? relay.lastPacket : null;
@@ -821,8 +821,10 @@ function pollProxy() {
         }
 
         return `<tr>
-          <td>${esc(c.clientAddr)}</td>
-          <td>${esc(c.radioAddr)}</td>
+          <td>${esc(c.remoteAddr)}</td>
+          <td>${c.handle ? esc(c.handle) : '<span class="tag-muted">—</span>'}</td>
+          <td>${c.program ? esc(c.program) : '<span class="tag-muted">—</span>'}</td>
+          <td>${c.station ? esc(c.station) : '<span class="tag-muted">—</span>'}</td>
           <td>${relay ? esc(relay.relayPort) : '<span class="tag-muted">—</span>'}</td>
           <td>${pkts.toLocaleString()}</td>
           <td>${last ? esc(relativeTime(last)) : '<span class="tag-muted">—</span>'}</td>
