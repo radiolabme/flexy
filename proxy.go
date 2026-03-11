@@ -354,20 +354,28 @@ func startDiscoveryRelay(ctx context.Context, proxyIP string) {
 			kv["nickname"] = nick + " [Flexy]"
 		}
 
-		// Rewrite gui_client_ips so companion apps (Smart CAT, Smart DAX)
-		// can match their own IP against the discovery data and find the
-		// correct station to bind to.
-		if rc := getRadioContext(); rc != nil {
-			rc.RewriteDiscoveryIPs(kv)
+		// Strip gui_client_* fields from the relayed discovery packet.
+		// Companion apps (Smart CAT, Smart DAX) re-evaluate their station
+		// list against these fields on every discovery tick.  When the IPs
+		// in discovery (radio-side LAN) don't match what the companion sees
+		// via the TCP subscription (also radio-side LAN, un-rewritten), the
+		// station list gets cleared.  Omitting these fields forces companion
+		// apps to rely solely on TC subscription data, which works correctly.
+		// This mirrors the approach used by SmartUnlink.
+		for _, k := range []string{
+			"gui_client_handles",
+			"gui_client_hosts",
+			"gui_client_ips",
+			"gui_client_programs",
+			"gui_client_stations",
+		} {
+			delete(kv, k)
 		}
 
 		if log.Debug().Enabled() {
-			if h, ok := kv["gui_client_handles"]; ok {
-				log.Debug().Str("ctx", "proxy").
-					Str("gui_client_handles", h).
-					Str("gui_client_ips", kv["gui_client_ips"]).
-					Msg("Discovery relay: client fields after rewrite")
-			}
+			log.Debug().Str("ctx", "proxy").
+				Int("fields", len(kv)).
+				Msg("Discovery relay: gui_client_* fields stripped")
 		}
 
 		pkt := buildDiscoveryPacket(kv)
