@@ -10,6 +10,7 @@ PROXY_PLATFORMS     := linux-amd64 linux-arm64 darwin-amd64 darwin-arm64
 DISCOVERY_PLATFORMS := linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64 windows-arm64
 
 .PHONY: all release proxy discovery embed-downloads clean \
+	test lint vet check fmt-check coverage govulncheck \
 	$(addprefix proxy-,$(PROXY_PLATFORMS)) \
 	$(addprefix discovery-,$(DISCOVERY_PLATFORMS))
 
@@ -70,3 +71,28 @@ install-arm64: proxy-linux-arm64
 
 clean:
 	rm -rf $(BIN) $(DLDIR)
+
+# --- quality checks ---
+
+test:
+	go test -race -count=1 ./...
+
+vet:
+	go vet ./...
+
+lint:
+	golangci-lint run ./...
+
+fmt-check:
+	@test -z "$$(gofmt -l .)" || (echo "gofmt needed on:"; gofmt -l .; exit 1)
+
+coverage:
+	go test -race -coverprofile=coverage.out ./...
+	go tool cover -func=coverage.out
+	@rm -f coverage.out
+
+govulncheck:
+	govulncheck ./...
+
+# Pre-commit quality gate: fast checks only.
+check: vet fmt-check lint test

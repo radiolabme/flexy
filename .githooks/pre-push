@@ -1,0 +1,16 @@
+#!/bin/sh
+set -e
+
+echo "pre-push: running full checks..."
+
+echo "  go test -race..."
+go test -race -count=1 ./...
+
+echo "  govulncheck..."
+if command -v govulncheck >/dev/null 2>&1; then
+    govulncheck ./...
+else
+    echo "  (govulncheck not installed, skipping)"
+fi
+
+echo "pre-push: all checks passed."

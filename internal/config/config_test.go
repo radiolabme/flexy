@@ -48,7 +48,7 @@ func TestSaveAndLoad(t *testing.T) {
 	cfg.Web = ":8080"
 	cfg.SetMetering(false)
 
-	if err := Save(cfg); err != nil {
+	if err := Save(&cfg); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
 

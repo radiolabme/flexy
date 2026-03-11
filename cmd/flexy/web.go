@@ -13,6 +13,16 @@ import (
 	log "github.com/rs/zerolog/log"
 )
 
+// secHeaders adds basic security headers to all responses.
+func secHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		next.ServeHTTP(w, r)
+	})
+}
+
 func runWebServer(ctx context.Context, listen string) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/config", handleAPIConfig)
@@ -28,15 +38,19 @@ func runWebServer(ctx context.Context, listen string) {
 	mux.Handle("/", http.FileServer(http.FS(webFS)))
 
 	srv := &http.Server{
-		Addr:    listen,
-		Handler: mux,
+		Addr:              listen,
+		Handler:           secHeaders(mux),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		MaxHeaderBytes:    1 << 18, // 256 KB
 	}
 
 	go func() {
 		<-ctx.Done()
 		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		srv.Shutdown(shutCtx)
+		_ = srv.Shutdown(shutCtx)
 	}()
 
 	log.Info().Str("addr", listen).Msg("Web UI listening")
@@ -55,6 +69,7 @@ func handleAPIConfig(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		// Pre-populate with current values so omitted fields stay unchanged.
 		incoming := cfg
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<16) // 64 KB
 		if err := json.NewDecoder(r.Body).Decode(&incoming); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -338,13 +353,13 @@ func handleAPIDownloads(w http.ResponseWriter, r *http.Request) {
 		Size int64  `json:"size"`
 	}
 	var files []dlEntry
-	fs.WalkDir(webFS, "downloads", func(path string, d fs.DirEntry, err error) error {
+	fs.WalkDir(webFS, "downloads", func(path string, d fs.DirEntry, err error) error { //nolint:errcheck // best-effort listing
 		if err != nil || d.IsDir() {
-			return nil
+			return nil //nolint:nilerr // skip errors, continue walk
 		}
 		info, err := d.Info()
 		if err != nil {
-			return nil
+			return nil //nolint:nilerr // skip unreadable entries
 		}
 		files = append(files, dlEntry{Name: d.Name(), Size: info.Size()})
 		return nil

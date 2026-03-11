@@ -74,7 +74,7 @@ func Load() (Config, error) {
 }
 
 // Save writes the config to the XDG config directory.
-func Save(cfg Config) error {
+func Save(cfg *Config) error {
 	p := Path()
 	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		return err
@@ -87,7 +87,7 @@ func Save(cfg Config) error {
 }
 
 // MeteringEnabled returns the effective metering value (default true).
-func (c Config) MeteringEnabled() bool {
+func (c *Config) MeteringEnabled() bool {
 	if c.Metering == nil {
 		return true
 	}

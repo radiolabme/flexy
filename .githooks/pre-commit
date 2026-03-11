@@ -1,0 +1,23 @@
+#!/bin/sh
+set -e
+
+echo "pre-commit: running checks..."
+
+echo "  go vet..."
+go vet ./...
+
+echo "  gofmt..."
+UNFORMATTED=$(gofmt -l .)
+if [ -n "$UNFORMATTED" ]; then
+    echo "ERROR: gofmt needed on:"
+    echo "$UNFORMATTED"
+    exit 1
+fi
+
+echo "  golangci-lint..."
+golangci-lint run ./...
+
+echo "  go test..."
+go test -race -count=1 ./...
+
+echo "pre-commit: all checks passed."

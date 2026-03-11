@@ -64,7 +64,7 @@ func init() {
 
 // applyConfigFile applies values from the XDG config file for any CLI flags
 // that were not explicitly set on the command line.
-func applyConfigFile(c config.Config) {
+func applyConfigFile(c *config.Config) {
 	set := make(map[string]bool)
 	flag.Visit(func(f *flag.Flag) { set[f.Name] = true })
 
@@ -146,9 +146,9 @@ func createClient(ctx context.Context) error {
 			return err
 		}
 		if res.Error != 0 {
-			log.Printf("Profile load failed: %08X (typo?)", res.Error)
+			log.Warn().Str("ctx", "flexy").Msgf("Profile load failed: %08X (typo?)", res.Error)
 		} else {
-			log.Printf("Loaded profile %s", cfg.Profile)
+			log.Info().Str("ctx", "flexy").Str("profile", cfg.Profile).Msg("Loaded profile")
 		}
 	}
 	return nil
@@ -345,7 +345,7 @@ func main() {
 	if err != nil {
 		log.Warn().Err(err).Msg("Failed to load config file; using defaults")
 	}
-	applyConfigFile(fileCfg)
+	applyConfigFile(&fileCfg)
 
 	logLevel, err := zerolog.ParseLevel(cfg.LogLevel)
 	if err != nil {

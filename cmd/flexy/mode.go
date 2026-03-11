@@ -51,11 +51,6 @@ var modesFromFlex = map[string]string{
 	"DFM":  "PKTFM",
 }
 
-var modeReversed = map[string]bool{
-	"LSB":  true,
-	"DIGL": true,
-}
-
 var defaultWidth = map[string]int{
 	"AM":   6000,
 	"SAM":  6000,

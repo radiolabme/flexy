@@ -128,7 +128,7 @@ func discoveryListenReusePort() (*net.UDPConn, error) {
 	if err != nil {
 		return nil, err
 	}
-	return conn.(*net.UDPConn), nil
+	return conn.(*net.UDPConn), nil //nolint:errcheck // concrete type guaranteed by ListenPacket("udp",...)
 }
 
 // getLocalIP returns the local IP address used to reach the radio.
@@ -138,41 +138,7 @@ func getLocalIP() string {
 		return ""
 	}
 	defer conn.Close()
-	return conn.LocalAddr().(*net.UDPAddr).IP.String()
-}
-
-// getBroadcastAddr returns the subnet broadcast address for the interface
-// that holds the given IP, falling back to 255.255.255.255.
-func getBroadcastAddr(ip string) net.IP {
-	ifaces, err := net.Interfaces()
-	if err != nil {
-		return net.IPv4bcast
-	}
-	for _, iface := range ifaces {
-		addrs, err := iface.Addrs()
-		if err != nil {
-			continue
-		}
-		for _, addr := range addrs {
-			ipNet, ok := addr.(*net.IPNet)
-			if !ok {
-				continue
-			}
-			if ipNet.IP.String() == ip {
-				ip4 := ipNet.IP.To4()
-				mask := ipNet.Mask
-				if ip4 == nil || len(mask) != 4 {
-					continue
-				}
-				bcast := make(net.IP, 4)
-				for i := range bcast {
-					bcast[i] = ip4[i] | ^mask[i]
-				}
-				return bcast
-			}
-		}
-	}
-	return net.IPv4bcast
+	return conn.LocalAddr().(*net.UDPAddr).IP.String() //nolint:errcheck // concrete type guaranteed by Dial("udp",...)
 }
 
 // lanBroadcastAddrs returns the broadcast address for every non-Tailscale,
@@ -441,7 +407,7 @@ func startUDPRelay(bindIP net.IP, destIP string, destPort int, done <-chan struc
 		return 0, nil, err
 	}
 
-	localPort := localConn.LocalAddr().(*net.UDPAddr).Port
+	localPort := localConn.LocalAddr().(*net.UDPAddr).Port //nolint:errcheck // concrete type guaranteed by ListenUDP
 	destAddr := &net.UDPAddr{IP: net.ParseIP(destIP), Port: destPort}
 	counter := &UDPRelayCounter{
 		ClientAddr: fmt.Sprintf("%s:%d", destIP, destPort),
@@ -497,7 +463,7 @@ func startUDPRelay(bindIP net.IP, destIP string, destPort int, done <-chan struc
 func handleSmartSDRClient(clientConn net.Conn) {
 	defer clientConn.Close()
 
-	clientAddr := clientConn.RemoteAddr().(*net.TCPAddr)
+	clientAddr := clientConn.RemoteAddr().(*net.TCPAddr) //nolint:errcheck // TCP conn guarantees *TCPAddr
 	radioAddr := cfg.RadioIP + ":" + smartsdrTCPPort
 	log.Info().Str("ctx", "proxy").Str("proto", "TCP").Str("dir", "←").Str("client", clientAddr.String()).Msg("SmartSDR client connected")
 
@@ -513,7 +479,7 @@ func handleSmartSDRClient(clientConn net.Conn) {
 	}
 	defer radioConn.Close()
 
-	localTCPAddr := radioConn.LocalAddr().(*net.TCPAddr)
+	localTCPAddr := radioConn.LocalAddr().(*net.TCPAddr) //nolint:errcheck // TCP conn guarantees *TCPAddr
 	log.Info().Str("ctx", "proxy").Str("proto", "TCP").
 		Str("local", localTCPAddr.String()).
 		Str("radio", radioAddr).

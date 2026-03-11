@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -65,13 +66,13 @@ func enableMetering(ctx context.Context, fc *flexclient.FlexClient) {
 
 	meterEvents := make(chan flexclient.StateUpdate)
 	fc.Subscribe(flexclient.Subscription{Prefix: "meter ", Updates: meterEvents})
-	go handleMeters(ctx, fc, meterPackets, meterEvents)
+	go handleMeters(ctx, meterPackets, meterEvents)
 	if _, err := fc.SendAndWaitContext(ctx, "sub meter all"); err != nil {
 		log.Error().Err(err).Msg("Failed to subscribe to meter updates")
 	}
 }
 
-func handleMeters(ctx context.Context, fc *flexclient.FlexClient, meterPackets chan flexclient.VitaPacket, meterEvents chan flexclient.StateUpdate) {
+func handleMeters(ctx context.Context, meterPackets chan flexclient.VitaPacket, meterEvents chan flexclient.StateUpdate) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -160,10 +161,11 @@ func meterPacket(pkt flexclient.VitaPacket) {
 		var val float64
 
 		err := binary.Read(&pktReader, binary.BigEndian, &id)
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			return
 		} else if err != nil {
-			log.Fatal().Err(err).Msg("decoding meter packet (1)")
+			log.Error().Err(err).Msg("decoding meter packet (1)")
+			return
 		}
 		name := fmt.Sprintf("meter %d", id)
 		hamlibName, found := flexToHamlib[name]
@@ -178,7 +180,8 @@ func meterPacket(pkt flexclient.VitaPacket) {
 		}
 		err = binary.Read(&pktReader, binary.BigEndian, &rawVal)
 		if err != nil {
-			log.Fatal().Err(err).Msg("decoding meter packet (2)")
+			log.Error().Err(err).Msg("decoding meter packet (2)")
+			return
 		}
 
 		switch meta["unit"] {

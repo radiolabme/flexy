@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -258,7 +259,7 @@ func (s *HamlibServer) handleCmd(ctx context.Context, conn *Conn, line string) b
 		switch handler := h.(type) {
 		case map[string]interface{}:
 			table = handler
-			i += 1
+			i++
 			continue
 		case Handler:
 			var e error
@@ -279,10 +280,10 @@ func (s *HamlibServer) handleCmd(ctx context.Context, conn *Conn, line string) b
 			}
 
 			if e != nil {
-				switch err := e.(type) {
-				case customError:
-					ret = err.response
-				default:
+				var ce customError
+				if errors.As(e, &ce) {
+					ret = ce.response
+				} else {
 					if handler.errResponse != nil {
 						ret = *handler.errResponse
 					} else {
@@ -307,7 +308,7 @@ func (s *HamlibServer) handleCmd(ctx context.Context, conn *Conn, line string) b
 }
 
 func processExtendedResponse(handler Handler, cmdline []string, ret string, sep string) string {
-	fieldNames := []string(handler.fieldNames)
+	fieldNames := handler.fieldNames
 	if fieldNames == nil {
 		fieldNames = []string{}
 	}
@@ -360,7 +361,7 @@ func (s *HamlibServer) AddHandler(handler Handler) {
 			if table[part] == nil {
 				table[part] = map[string]interface{}{}
 			}
-			table = table[part].(map[string]interface{})
+			table = table[part].(map[string]interface{}) //nolint:errcheck // internal handler tree, structure is known
 		}
 
 		table[nameWithArgs[len(nameWithArgs)-1]] = handler

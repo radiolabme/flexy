@@ -140,7 +140,8 @@ func (m tuiModel) View() string {
 
 	case tuiSelectRadio:
 		b.WriteString("Select a radio:\n\n")
-		for i, r := range m.radios {
+		for i := range m.radios {
+			r := &m.radios[i]
 			label := formatRadioLabel(r)
 			if i == m.cursor {
 				b.WriteString(selectedStyle.Render("▸ " + label))
@@ -155,7 +156,7 @@ func (m tuiModel) View() string {
 	return b.String()
 }
 
-func formatRadioLabel(r discovery.Radio) string {
+func formatRadioLabel(r *discovery.Radio) string {
 	nick := r.Nickname
 	if nick == "" {
 		nick = r.Serial
@@ -177,6 +178,6 @@ func runTUI() *discovery.Radio {
 	if err != nil {
 		return nil
 	}
-	fm := final.(tuiModel)
+	fm := final.(tuiModel) //nolint:errcheck // bubbletea returns our model type
 	return fm.result.Radio
 }

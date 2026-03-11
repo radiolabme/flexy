@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -56,7 +57,7 @@ func runSetup() bool {
 	).Run()
 
 	if err != nil {
-		if err == huh.ErrUserAborted {
+		if errors.Is(err, huh.ErrUserAborted) {
 			fmt.Fprintln(os.Stderr, "Setup cancelled.")
 			return false
 		}
@@ -64,7 +65,7 @@ func runSetup() bool {
 		return false
 	}
 
-	if err := config.Save(c); err != nil {
+	if err := config.Save(&c); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to save config: %v\n", err)
 		return false
 	}
