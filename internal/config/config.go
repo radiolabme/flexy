@@ -15,10 +15,16 @@ import (
 const (
 	appName    = "flexy"
 	configFile = "config.json"
+
+	// CurrentVersion is bumped whenever new config fields are added.
+	// The setup wizard stamps this value; on load, a mismatch means
+	// the user should re-run --setup.
+	CurrentVersion = 2
 )
 
 // Config holds all flexy configuration. JSON tags match the CLI flag names.
 type Config struct {
+	Version     int    `json:"version,omitempty"`
 	Radio       string `json:"radio,omitempty"`
 	UDPPort     int    `json:"udp_port,omitempty"`
 	Station     string `json:"station,omitempty"`
@@ -35,6 +41,12 @@ type Config struct {
 	Metering    *bool  `json:"metering,omitempty"`
 	LogPings    bool   `json:"log_pings,omitempty"`
 	ProxyOnly   bool   `json:"proxy_only,omitempty"`
+}
+
+// IsStale returns true when the config was saved by an older version
+// of the setup wizard and may be missing fields.
+func (c *Config) IsStale() bool {
+	return c.Version < CurrentVersion
 }
 
 // Defaults returns a Config with all default values.

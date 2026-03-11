@@ -347,6 +347,13 @@ func main() {
 	if err != nil {
 		log.Warn().Err(err).Msg("Failed to load config file; using defaults")
 	}
+	if fileCfg.IsStale() {
+		log.Warn().
+			Int("file_version", fileCfg.Version).
+			Int("current_version", config.CurrentVersion).
+			Str("path", config.Path()).
+			Msg("Config file is outdated; run --setup to configure new options")
+	}
 	applyConfigFile(&fileCfg)
 
 	logLevel, err := zerolog.ParseLevel(cfg.LogLevel)

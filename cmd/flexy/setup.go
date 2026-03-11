@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strconv"
 
 	"github.com/charmbracelet/huh"
 	"github.com/radiolabme/flexy/internal/config"
@@ -149,6 +150,17 @@ func runSetup() bool {
 		customAdvIP = c.ProxyIP
 	}
 
+	// UDP port for VITA packets
+	udpPortStr := ""
+	if c.UDPPort != 0 {
+		udpPortStr = strconv.Itoa(c.UDPPort)
+	}
+
+	// Log level
+	if c.LogLevel == "" {
+		c.LogLevel = "info"
+	}
+
 	err := huh.NewForm(
 		huh.NewGroup(
 			huh.NewInput().
@@ -250,6 +262,29 @@ func runSetup() bool {
 				Description("Enter the IP address to advertise").
 				Value(&customAdvIP),
 		).WithHideFunc(func() bool { return advIPSel != proxyIPOther }),
+
+		huh.NewGroup(
+			huh.NewInput().
+				Title("UDP port").
+				Description("VITA-49 listen port (blank for random free port)").
+				Placeholder("0").
+				Value(&udpPortStr),
+
+			huh.NewSelect[string]().
+				Title("Log level").
+				Options(
+					huh.NewOption("debug", "debug"),
+					huh.NewOption("info", "info"),
+					huh.NewOption("warn", "warn"),
+					huh.NewOption("error", "error"),
+				).
+				Value(&c.LogLevel),
+
+			huh.NewConfirm().
+				Title("Headless mode").
+				Description("Run without interactive TUI").
+				Value(&c.Headless),
+		).Title("Advanced"),
 	).Run()
 
 	if err != nil {
@@ -293,6 +328,15 @@ func runSetup() bool {
 	} else {
 		c.ProxyIP = advIPSel
 	}
+
+	// UDP port
+	if udpPortStr != "" {
+		c.UDPPort, _ = strconv.Atoi(udpPortStr)
+	} else {
+		c.UDPPort = 0
+	}
+
+	c.Version = config.CurrentVersion
 
 	if err := config.Save(&c); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to save config: %v\n", err)

@@ -79,6 +79,17 @@ func TestSaveAndLoad(t *testing.T) {
 	}
 }
 
+func TestIsStale(t *testing.T) {
+	c := Config{Version: 0}
+	if !c.IsStale() {
+		t.Error("version 0 should be stale")
+	}
+	c.Version = CurrentVersion
+	if c.IsStale() {
+		t.Error("current version should not be stale")
+	}
+}
+
 func TestLoadInvalidJSON(t *testing.T) {
 	tmp := t.TempDir()
 	setConfigHome(t, tmp)
