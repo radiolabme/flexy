@@ -598,6 +598,52 @@ function formatBytes(b) {
 }
 
 // ---- Downloads ----
+function detectPlatform() {
+  var ua = navigator.userAgent.toLowerCase();
+  var os = 'unknown', arch = 'unknown';
+  if (ua.indexOf('win') !== -1) os = 'windows';
+  else if (ua.indexOf('mac') !== -1 || ua.indexOf('darwin') !== -1) os = 'darwin';
+  else if (ua.indexOf('linux') !== -1) os = 'linux';
+  if (ua.indexOf('arm64') !== -1 || ua.indexOf('aarch64') !== -1) arch = 'arm64';
+  else if (ua.indexOf('x86_64') !== -1 || ua.indexOf('x86-64') !== -1 || ua.indexOf('amd64') !== -1 || ua.indexOf('x64') !== -1 || ua.indexOf('wow64') !== -1 || ua.indexOf('win64') !== -1) arch = 'amd64';
+  else if (os === 'windows' || os === 'darwin') arch = 'amd64';
+  // navigator.userAgentData can provide better arch info
+  if (navigator.userAgentData && navigator.userAgentData.getHighEntropyValues) {
+    navigator.userAgentData.getHighEntropyValues(['architecture', 'platform']).then(function(d) {
+      if (d.platform) {
+        var p = d.platform.toLowerCase();
+        if (p === 'windows') os = 'windows';
+        else if (p === 'macos') os = 'darwin';
+        else if (p === 'linux') os = 'linux';
+      }
+      if (d.architecture) {
+        var a = d.architecture.toLowerCase();
+        if (a === 'arm') arch = 'arm64';
+        else if (a === 'x86') arch = 'amd64';
+      }
+      highlightDownload(os, arch);
+    });
+  }
+  return { os: os, arch: arch };
+}
+
+function highlightDownload(os, arch) {
+  document.querySelectorAll('#dl-list a').forEach(function(a) {
+    var name = (a.getAttribute('href') || '').split('/').pop().replace(/\.exe$/, '');
+    var parts = name.split('-');
+    var fos = parts[2] || '', farch = parts[3] || '';
+    if (fos === os && farch === arch) {
+      a.style.borderColor = 'var(--blue)';
+      a.style.boxShadow = '0 0 0 2px var(--blue)';
+      a.style.fontWeight = '600';
+    } else {
+      a.style.borderColor = 'var(--border)';
+      a.style.boxShadow = 'none';
+      a.style.fontWeight = 'normal';
+    }
+  });
+}
+
 (async function loadDownloads() {
   const el = document.getElementById('dl-list');
   try {
@@ -616,6 +662,8 @@ function formatBytes(b) {
         + esc(label) + ' <span style="color:var(--muted);font-size:0.85em">' + formatBytes(f.size) + '</span></a>';
     });
     el.innerHTML = rows.join('');
+    const plat = detectPlatform();
+    highlightDownload(plat.os, plat.arch);
   } catch (e) {
     el.innerHTML = '<span style="color:var(--red)">Failed to load downloads</span>';
   }
