@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -14,7 +15,7 @@ func TestSecHeaders(t *testing.T) {
 	})
 	handler := secHeaders(inner)
 
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
@@ -38,7 +39,7 @@ func TestHandleAPILogs(t *testing.T) {
 	logBuf.Write([]byte(`{"level":"info","msg":"hello"}`))
 	logBuf.Write([]byte(`{"level":"info","msg":"world"}`))
 
-	req := httptest.NewRequest(http.MethodGet, "/api/logs?since=1", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/logs?since=1", nil)
 	rec := httptest.NewRecorder()
 	handleAPILogs(rec, req)
 
@@ -71,7 +72,7 @@ func TestMethodNotAllowed(t *testing.T) {
 	}
 	for _, tc := range cases {
 		rec := httptest.NewRecorder()
-		tc.handler(rec, httptest.NewRequest(tc.method, tc.path, nil))
+		tc.handler(rec, httptest.NewRequestWithContext(context.Background(), tc.method, tc.path, nil))
 		if rec.Code != http.StatusMethodNotAllowed {
 			t.Errorf("%s %s: status = %d, want 405", tc.method, tc.path, rec.Code)
 		}
@@ -79,7 +80,7 @@ func TestMethodNotAllowed(t *testing.T) {
 }
 
 func TestHandleAPIConfig_PostBadJSON(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/api/config", strings.NewReader("{bad"))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/config", strings.NewReader("{bad"))
 	rec := httptest.NewRecorder()
 	handleAPIConfig(rec, req)
 	if rec.Code != http.StatusBadRequest {
@@ -88,7 +89,7 @@ func TestHandleAPIConfig_PostBadJSON(t *testing.T) {
 }
 
 func TestHandleAPIReconnect(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/api/reconnect", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/reconnect", nil)
 	rec := httptest.NewRecorder()
 	handleAPIReconnect(rec, req)
 	if rec.Code != http.StatusOK {

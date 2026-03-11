@@ -52,7 +52,7 @@ func runWebServer(ctx context.Context, listen string) {
 		MaxHeaderBytes:    1 << 18, // 256 KB
 	}
 
-	go func() {
+	go func() { //nolint:gosec // shutdown needs a fresh context; parent is already cancelled
 		<-ctx.Done()
 		shutCtx, cancel := context.WithTimeout(context.Background(), httpShutdownTimeout)
 		defer cancel()
