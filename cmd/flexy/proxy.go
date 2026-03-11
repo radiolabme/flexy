@@ -128,7 +128,7 @@ func discoveryListenReusePort() (*net.UDPConn, error) {
 	if err != nil {
 		return nil, err
 	}
-	return conn.(*net.UDPConn), nil //nolint:errcheck // concrete type guaranteed by ListenPacket("udp",...)
+	return conn.(*net.UDPConn), nil //nolint:errcheck
 }
 
 // getLocalIP returns the local IP address used to reach the radio.
@@ -138,7 +138,7 @@ func getLocalIP() string {
 		return ""
 	}
 	defer conn.Close()
-	return conn.LocalAddr().(*net.UDPAddr).IP.String() //nolint:errcheck // concrete type guaranteed by Dial("udp",...)
+	return conn.LocalAddr().(*net.UDPAddr).IP.String() //nolint:errcheck
 }
 
 // lanBroadcastAddrs returns the broadcast address for every non-Tailscale,
@@ -407,7 +407,7 @@ func startUDPRelay(bindIP net.IP, destIP string, destPort int, done <-chan struc
 		return 0, nil, err
 	}
 
-	localPort := localConn.LocalAddr().(*net.UDPAddr).Port //nolint:errcheck // concrete type guaranteed by ListenUDP
+	localPort := localConn.LocalAddr().(*net.UDPAddr).Port //nolint:errcheck
 	destAddr := &net.UDPAddr{IP: net.ParseIP(destIP), Port: destPort}
 	counter := &UDPRelayCounter{
 		ClientAddr: fmt.Sprintf("%s:%d", destIP, destPort),
@@ -463,7 +463,7 @@ func startUDPRelay(bindIP net.IP, destIP string, destPort int, done <-chan struc
 func handleSmartSDRClient(clientConn net.Conn) {
 	defer clientConn.Close()
 
-	clientAddr := clientConn.RemoteAddr().(*net.TCPAddr) //nolint:errcheck // TCP conn guarantees *TCPAddr
+	clientAddr := clientConn.RemoteAddr().(*net.TCPAddr) //nolint:errcheck
 	radioAddr := cfg.RadioIP + ":" + smartsdrTCPPort
 	log.Info().Str("ctx", "proxy").Str("proto", "TCP").Str("dir", "←").Str("client", clientAddr.String()).Msg("SmartSDR client connected")
 
@@ -479,7 +479,7 @@ func handleSmartSDRClient(clientConn net.Conn) {
 	}
 	defer radioConn.Close()
 
-	localTCPAddr := radioConn.LocalAddr().(*net.TCPAddr) //nolint:errcheck // TCP conn guarantees *TCPAddr
+	localTCPAddr := radioConn.LocalAddr().(*net.TCPAddr) //nolint:errcheck
 	log.Info().Str("ctx", "proxy").Str("proto", "TCP").
 		Str("local", localTCPAddr.String()).
 		Str("radio", radioAddr).

@@ -2,47 +2,50 @@ package main
 
 import "sync"
 
-// LogLine holds one log entry (raw zerolog JSON) with a monotonic sequence number.
 type LogLine struct {
 	Seq  int64  `json:"seq"`
 	Text string `json:"text"`
 }
 
-// LogBuffer is a fixed-capacity ring buffer of recent log lines.
 type LogBuffer struct {
-	mu    sync.Mutex
-	lines []LogLine
-	cap   int
-	next  int64
+	mu   sync.Mutex
+	ring []LogLine
+	head int  // write index (mod len(ring))
+	full bool // ring has wrapped at least once
+	next int64
 }
 
 var logBuf = newLogBuffer(500)
 
 func newLogBuffer(cap int) *LogBuffer {
-	return &LogBuffer{lines: make([]LogLine, 0, cap), cap: cap}
+	return &LogBuffer{ring: make([]LogLine, cap)}
 }
 
-// Write implements io.Writer; called by zerolog with raw JSON per log line.
+// Write implements io.Writer for zerolog.
 func (b *LogBuffer) Write(p []byte) (int, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	line := LogLine{Seq: b.next, Text: string(p)}
+	b.ring[b.head] = LogLine{Seq: b.next, Text: string(p)}
 	b.next++
-	if len(b.lines) < b.cap {
-		b.lines = append(b.lines, line)
-	} else {
-		copy(b.lines, b.lines[1:])
-		b.lines[len(b.lines)-1] = line
+	b.head++
+	if b.head == len(b.ring) {
+		b.head = 0
+		b.full = true
 	}
 	return len(p), nil
 }
 
-// Since returns all lines with Seq >= since, plus the current last sequence number.
 func (b *LogBuffer) Since(since int64) ([]LogLine, int64) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	var out []LogLine
-	for _, l := range b.lines {
+	n := b.count()
+	start := b.head - n
+	if start < 0 {
+		start += len(b.ring)
+	}
+	for i := range n {
+		l := b.ring[(start+i)%len(b.ring)]
 		if l.Seq >= since {
 			out = append(out, l)
 		}
@@ -52,4 +55,11 @@ func (b *LogBuffer) Since(since int64) ([]LogLine, int64) {
 		last = 0
 	}
 	return out, last
+}
+
+func (b *LogBuffer) count() int {
+	if b.full {
+		return len(b.ring)
+	}
+	return b.head
 }

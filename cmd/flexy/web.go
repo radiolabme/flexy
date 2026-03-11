@@ -13,7 +13,6 @@ import (
 	log "github.com/rs/zerolog/log"
 )
 
-// secHeaders adds basic security headers to all responses.
 func secHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -353,13 +352,13 @@ func handleAPIDownloads(w http.ResponseWriter, r *http.Request) {
 		Size int64  `json:"size"`
 	}
 	var files []dlEntry
-	fs.WalkDir(webFS, "downloads", func(path string, d fs.DirEntry, err error) error { //nolint:errcheck // best-effort listing
+	fs.WalkDir(webFS, "downloads", func(path string, d fs.DirEntry, err error) error { //nolint:errcheck
 		if err != nil || d.IsDir() {
-			return nil //nolint:nilerr // skip errors, continue walk
+			return nil //nolint:nilerr
 		}
 		info, err := d.Info()
 		if err != nil {
-			return nil //nolint:nilerr // skip unreadable entries
+			return nil //nolint:nilerr
 		}
 		files = append(files, dlEntry{Name: d.Name(), Size: info.Size()})
 		return nil

@@ -9,8 +9,6 @@ import (
 	"github.com/radiolabme/flexy/internal/config"
 )
 
-// runSetup launches an interactive setup wizard and saves the result to
-// the XDG config file. Returns true if the config was saved.
 func runSetup() bool {
 	c, _ := config.Load()
 

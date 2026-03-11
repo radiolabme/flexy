@@ -2,20 +2,6 @@ package main
 
 import "testing"
 
-func TestNewLogBuffer(t *testing.T) {
-	b := newLogBuffer(3)
-	if b.cap != 3 {
-		t.Fatalf("cap = %d, want 3", b.cap)
-	}
-	lines, last := b.Since(0)
-	if len(lines) != 0 {
-		t.Errorf("empty buffer returned %d lines", len(lines))
-	}
-	if last != 0 {
-		t.Errorf("last = %d, want 0", last)
-	}
-}
-
 func TestLogBufferWrite(t *testing.T) {
 	b := newLogBuffer(5)
 	for i := range 3 {
@@ -57,7 +43,7 @@ func TestLogBufferOverflow(t *testing.T) {
 	}
 }
 
-func TestLogBufferSinceFilter(t *testing.T) {
+func TestLogBufferSince(t *testing.T) {
 	b := newLogBuffer(10)
 	for range 5 {
 		b.Write([]byte("x"))

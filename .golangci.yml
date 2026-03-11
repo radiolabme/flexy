@@ -66,46 +66,34 @@ linters:
         - name: unreachable-code
   exclusions:
     rules:
-      # Fire-and-forget Close/Write/Seek on cleanup and network I/O.
       - linters: [errcheck]
         source: "\\.(Close|Write|WriteTo|Seek|Fprintf)\\("
       - linters: [errcheck]
         source: "c\\.Control\\("
-      # json.Encode to http.ResponseWriter — error is handled by net/http.
       - linters: [errcheck]
         source: "json\\.NewEncoder\\(w\\)\\.Encode"
-      # fs.WalkDir with inline callback.
       - linters: [errcheck]
         source: "fs\\.WalkDir"
-      # flexclient.DiscoverAll launched in a goroutine (no return value to check).
       - linters: [errcheck]
         source: "flexclient\\.DiscoverAll"
-      # Test helpers: MkdirAll/WriteFile in test setup.
       - linters: [errcheck]
         path: "_test\\.go$"
-      # Hamlib handler names match wire protocol (get_freq, set_mode, etc.).
+      # Hamlib wire protocol names: get_freq, set_mode, etc.
       - linters: [revive]
         path: "cmd/flexy/(audio|freq|mode|ptt|rfpower|vfo|preamp-att|tuner|powerstat|rawcmd|metering)\\.go$"
         text: "var-naming.*underscore"
-      # bubbletea Model interface requires value receivers.
       - linters: [gocritic]
         path: "cmd/flexy/tui\\.go$"
         text: "hugeParam"
-      # gosec G104 duplicates our errcheck exclusions.
       - linters: [gosec]
         text: "G104"
-      # net.Listen/Dial without context — these functions don't accept a context
-      # in the call sites where they're used (hamlib listener, proxy TCP).
       - linters: [noctx]
         path: "cmd/flexy/(hamlib|proxy)\\.go$"
-      # Existing Handler struct passed by value — refactor out of scope.
       - linters: [gocritic]
         path: "cmd/flexy/hamlib\\.go$"
         text: "hugeParam"
-      # ifElseChain in existing hamlib/tuner code — style refactor out of scope.
       - linters: [gocritic]
         text: "ifElseChain"
-      # exitAfterDefer: log.Fatal in main/discovery is intentional crash-on-startup.
       - linters: [gocritic]
         text: "exitAfterDefer"
       # weakCond on regex FindStringSubmatch — nil means no match, len is guaranteed.

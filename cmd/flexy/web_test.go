@@ -60,21 +60,21 @@ func TestHandleAPILogs(t *testing.T) {
 	}
 }
 
-func TestHandleAPILogs_MethodNotAllowed(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/api/logs", nil)
-	rec := httptest.NewRecorder()
-	handleAPILogs(rec, req)
-	if rec.Code != http.StatusMethodNotAllowed {
-		t.Errorf("status = %d, want 405", rec.Code)
+func TestMethodNotAllowed(t *testing.T) {
+	cases := []struct {
+		path, method string
+		handler      http.HandlerFunc
+	}{
+		{"/api/logs", http.MethodPost, handleAPILogs},
+		{"/api/config", http.MethodDelete, handleAPIConfig},
+		{"/api/reconnect", http.MethodGet, handleAPIReconnect},
 	}
-}
-
-func TestHandleAPIConfig_MethodNotAllowed(t *testing.T) {
-	req := httptest.NewRequest(http.MethodDelete, "/api/config", nil)
-	rec := httptest.NewRecorder()
-	handleAPIConfig(rec, req)
-	if rec.Code != http.StatusMethodNotAllowed {
-		t.Errorf("status = %d, want 405", rec.Code)
+	for _, tc := range cases {
+		rec := httptest.NewRecorder()
+		tc.handler(rec, httptest.NewRequest(tc.method, tc.path, nil))
+		if rec.Code != http.StatusMethodNotAllowed {
+			t.Errorf("%s %s: status = %d, want 405", tc.method, tc.path, rec.Code)
+		}
 	}
 }
 
@@ -96,15 +96,6 @@ func TestHandleAPIReconnect(t *testing.T) {
 	}
 	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
 		t.Errorf("Content-Type = %q, want application/json", ct)
-	}
-}
-
-func TestHandleAPIReconnect_MethodNotAllowed(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/api/reconnect", nil)
-	rec := httptest.NewRecorder()
-	handleAPIReconnect(rec, req)
-	if rec.Code != http.StatusMethodNotAllowed {
-		t.Errorf("status = %d, want 405", rec.Code)
 	}
 }
 

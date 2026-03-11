@@ -361,7 +361,7 @@ func (s *HamlibServer) AddHandler(handler Handler) {
 			if table[part] == nil {
 				table[part] = map[string]interface{}{}
 			}
-			table = table[part].(map[string]interface{}) //nolint:errcheck // internal handler tree, structure is known
+			table = table[part].(map[string]interface{}) //nolint:errcheck
 		}
 
 		table[nameWithArgs[len(nameWithArgs)-1]] = handler

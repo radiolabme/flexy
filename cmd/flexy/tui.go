@@ -12,7 +12,6 @@ import (
 	"github.com/radiolabme/flexy/internal/discovery"
 )
 
-// TUI states
 type tuiState int
 
 const (
@@ -20,10 +19,8 @@ const (
 	tuiSelectRadio
 )
 
-// Messages
 type radiosMsg []discovery.Radio
 
-// tuiResult holds the outcome of the TUI startup flow.
 type tuiResult struct {
 	Radio *discovery.Radio
 	Err   error
@@ -169,8 +166,6 @@ func formatRadioLabel(r *discovery.Radio) string {
 	return fmt.Sprintf("%s @ %s %s%s", nick, r.IP, status, inuse)
 }
 
-// runTUI launches the interactive startup TUI. It blocks until the user
-// selects a radio or quits. Returns the selected radio or nil.
 func runTUI() *discovery.Radio {
 	m := newTUIModel()
 	p := tea.NewProgram(m, tea.WithAltScreen())
@@ -178,6 +173,6 @@ func runTUI() *discovery.Radio {
 	if err != nil {
 		return nil
 	}
-	fm := final.(tuiModel) //nolint:errcheck // bubbletea returns our model type
+	fm := final.(tuiModel) //nolint:errcheck
 	return fm.result.Radio
 }

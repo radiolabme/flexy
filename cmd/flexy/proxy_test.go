@@ -6,9 +6,7 @@ import (
 	"testing"
 )
 
-// --- Discovery payload codec ---
-
-func TestParseDiscoveryPayload_Basic(t *testing.T) {
+func TestParseDiscoveryPayload(t *testing.T) {
 	kv := parseDiscoveryPayload("model=FLEX-6600M serial=1234-5678-9012-3456")
 	if kv["model"] != "FLEX-6600M" {
 		t.Errorf("model = %q", kv["model"])
@@ -112,13 +110,6 @@ func containsByte(s string, b byte) bool {
 	}
 	return false
 }
-
-// --- Protocol line regex tests ---
-// These test the regexes against the SmartSDR TCP API protocol spec:
-//   - Client→Radio: C<seq>|<command>
-//   - Radio→Client: R<seq>|<status>|<payload>
-//   - Handle assignment: H<hex>
-//   - Status updates: S<handle>|<type> <params>
 
 func TestClientIPCmdRe(t *testing.T) {
 	tests := []struct {
