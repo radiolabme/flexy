@@ -13,6 +13,13 @@ import (
 	log "github.com/rs/zerolog/log"
 )
 
+const (
+	httpReadHeaderTimeout = 10 * time.Second
+	httpReadTimeout       = 30 * time.Second
+	httpWriteTimeout      = 60 * time.Second
+	httpShutdownTimeout   = 5 * time.Second
+)
+
 func secHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -39,15 +46,15 @@ func runWebServer(ctx context.Context, listen string) {
 	srv := &http.Server{
 		Addr:              listen,
 		Handler:           secHeaders(mux),
-		ReadHeaderTimeout: 10 * time.Second,
-		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      60 * time.Second,
+		ReadHeaderTimeout: httpReadHeaderTimeout,
+		ReadTimeout:       httpReadTimeout,
+		WriteTimeout:      httpWriteTimeout,
 		MaxHeaderBytes:    1 << 18, // 256 KB
 	}
 
 	go func() {
 		<-ctx.Done()
-		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		shutCtx, cancel := context.WithTimeout(context.Background(), httpShutdownTimeout)
 		defer cancel()
 		_ = srv.Shutdown(shutCtx)
 	}()

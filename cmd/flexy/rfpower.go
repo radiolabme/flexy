@@ -51,7 +51,7 @@ func init() {
 func get_level_rfpower(ctx context.Context, _ []string) (string, error) {
 	xmit, ok := fc.GetObject("transmit")
 	if !ok {
-		return "", fmt.Errorf("couldn't get transmit obj")
+		return "", fmt.Errorf("couldn't get transmit object")
 	}
 	power, err := strconv.ParseFloat(xmit["rfpower"], 64)
 	if err != nil {

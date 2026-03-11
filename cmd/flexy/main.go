@@ -19,6 +19,8 @@ import (
 	"github.com/radiolabme/flexy/internal/config"
 )
 
+const reconnectDelay = 5 * time.Second
+
 type Config struct {
 	RadioIP          string
 	Station          string
@@ -452,7 +454,7 @@ func main() {
 			if err != nil && !errors.Is(err, context.Canceled) {
 				log.Error().Err(err).Msg("Radio connection failed; retrying in 5s")
 				select {
-				case <-time.After(5 * time.Second):
+				case <-time.After(reconnectDelay):
 				case <-rootCtx.Done():
 				}
 			}

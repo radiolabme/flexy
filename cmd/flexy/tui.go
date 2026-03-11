@@ -15,6 +15,8 @@ import (
 type tuiState int
 
 const (
+	discoveryScanTimeout = 5 * time.Second
+
 	tuiDiscovering tuiState = iota
 	tuiSelectRadio
 )
@@ -49,7 +51,7 @@ func newTUIModel() tuiModel {
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("69"))
 
 	ctx, cancel := context.WithCancel(context.Background())
-	ch := discovery.Scan(ctx, 5*time.Second)
+	ch := discovery.Scan(ctx, discoveryScanTimeout)
 
 	return tuiModel{
 		state:   tuiDiscovering,

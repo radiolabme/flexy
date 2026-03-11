@@ -80,7 +80,7 @@ var centerFreq = map[string]int{
 func get_mode(ctx context.Context, _ []string) (string, error) {
 	slice, ok := fc.GetObject("slice " + SliceIdx)
 	if !ok {
-		return "", fmt.Errorf("get slice %s failed", SliceIdx)
+		return "", fmt.Errorf("couldn't get slice %s", SliceIdx)
 	}
 
 	translated, ok := modesFromFlex[slice["mode"]]

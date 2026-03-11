@@ -26,6 +26,9 @@ const (
 	flexOUI            = uint32(0x001c2d)
 	discoveryClassCode = uint16(0xffff)
 	smartsdrTCPPort    = "4992"
+
+	natKeepaliveInterval = 25 * time.Second
+	cleanupWriteDeadline = 2 * time.Second
 )
 
 // tailscaleCGNAT is the CGNAT range used by Tailscale for its peer addresses.
@@ -420,7 +423,7 @@ func startUDPRelay(bindIP net.IP, destIP string, destPort int, done <-chan struc
 		radioVITAAddr := &net.UDPAddr{IP: radioIP, Port: 4991}
 		localConn.WriteTo([]byte{0}, radioVITAAddr)
 		go func() {
-			ticker := time.NewTicker(25 * time.Second)
+			ticker := time.NewTicker(natKeepaliveInterval)
 			defer ticker.Stop()
 			for {
 				select {
@@ -455,6 +458,38 @@ func startUDPRelay(bindIP net.IP, destIP string, destPort int, done <-chan struc
 	}()
 
 	return localPort, counter, nil
+}
+
+func cleanupProxyClient(pc *ProxyClient, radioConn net.Conn) {
+	if pc.Handle != "" {
+		if rc := getRadioContext(); rc != nil {
+			rc.UnregisterClient(pc.Handle)
+		}
+	}
+	if pc.Handle == "" || (len(pc.OwnedPans) == 0 && len(pc.OwnedSlices) == 0) {
+		return
+	}
+	if rc := getRadioContext(); rc != nil {
+		rc.mu.RLock()
+		otherConns := len(rc.Clients) > 0
+		rc.mu.RUnlock()
+		if otherConns {
+			log.Info().Str("ctx", "proxy").Str("handle", pc.Handle).
+				Msg("Proxy cleanup skipped: other clients still connected")
+			return
+		}
+	}
+	log.Info().Str("ctx", "proxy").Str("handle", pc.Handle).
+		Int("pans", len(pc.OwnedPans)).Int("slices", len(pc.OwnedSlices)).
+		Msg("Proxy cleanup: removing client pans and slices on disconnect")
+	_ = radioConn.SetWriteDeadline(time.Now().Add(cleanupWriteDeadline))
+	for pan := range pc.OwnedPans {
+		fmt.Fprintf(radioConn, "display pan remove %s\n", pan)
+	}
+	for slice := range pc.OwnedSlices {
+		fmt.Fprintf(radioConn, "slice remove %s\n", slice)
+	}
+	_ = radioConn.SetWriteDeadline(time.Time{})
 }
 
 // handleSmartSDRClient proxies one SmartSDR TCP connection to the real radio,
@@ -498,40 +533,7 @@ func handleSmartSDRClient(clientConn net.Conn) {
 		OwnedSlices: make(map[string]struct{}),
 	}
 
-	defer func() {
-		// Unregister from RadioContext.
-		if pc.Handle != "" {
-			if rc := getRadioContext(); rc != nil {
-				rc.UnregisterClient(pc.Handle)
-			}
-		}
-		// Cleanup owned resources.
-		if pc.Handle == "" || (len(pc.OwnedPans) == 0 && len(pc.OwnedSlices) == 0) {
-			return
-		}
-		// Skip cleanup if other proxy clients are still connected to this radio.
-		if rc := getRadioContext(); rc != nil {
-			rc.mu.RLock()
-			otherConns := len(rc.Clients) > 0
-			rc.mu.RUnlock()
-			if otherConns {
-				log.Info().Str("ctx", "proxy").Str("handle", pc.Handle).
-					Msg("Proxy cleanup skipped: other clients still connected")
-				return
-			}
-		}
-		log.Info().Str("ctx", "proxy").Str("handle", pc.Handle).
-			Int("pans", len(pc.OwnedPans)).Int("slices", len(pc.OwnedSlices)).
-			Msg("Proxy cleanup: removing client pans and slices on disconnect")
-		_ = radioConn.SetWriteDeadline(time.Now().Add(2 * time.Second))
-		for pan := range pc.OwnedPans {
-			fmt.Fprintf(radioConn, "display pan remove %s\n", pan)
-		}
-		for slice := range pc.OwnedSlices {
-			fmt.Fprintf(radioConn, "slice remove %s\n", slice)
-		}
-		_ = radioConn.SetWriteDeadline(time.Time{})
-	}()
+	defer cleanupProxyClient(pc, radioConn)
 
 	// Track "client ip" command sequence numbers so we can rewrite the
 	// response with the real client IP instead of the proxy LAN IP.

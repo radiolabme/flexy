@@ -65,7 +65,10 @@ func set_ptt(ctx context.Context, args []string) (string, error) {
 		}
 	}
 
-	res := fc.SendAndWait("xmit " + tx)
+	res, err := fc.SendAndWaitContext(ctx, "xmit "+tx)
+	if err != nil {
+		return "", err
+	}
 	if res.Error != 0 {
 		return "", fmt.Errorf("xmit %08X", res.Error)
 	}

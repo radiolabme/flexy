@@ -71,7 +71,11 @@ func set_func_tuner(ctx context.Context, args []string) (string, error) {
 		}
 
 		if atu["status"] != "TUNE_MANUAL_BYPASS" {
-			if res := fc.SendAndWait("atu bypass"); res.Error != 0 {
+			res, err := fc.SendAndWaitContext(ctx, "atu bypass")
+			if err != nil {
+				return err
+			}
+			if res.Error != 0 {
 				return fmt.Errorf("atu bypass %08X", res.Error)
 			}
 		}
@@ -91,7 +95,11 @@ func set_func_tuner(ctx context.Context, args []string) (string, error) {
 		if err := stopTune(); err != nil {
 			return "", err
 		}
-		if res := fc.SendAndWait("atu start"); res.Error != 0 {
+		res, err := fc.SendAndWaitContext(ctx, "atu start")
+		if err != nil {
+			return "", err
+		}
+		if res.Error != 0 {
 			return "", fmt.Errorf("atu start %08X", res.Error)
 		}
 		return Success, nil
