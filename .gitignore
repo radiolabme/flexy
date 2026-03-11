@@ -1,5 +1,4 @@
-flexy
-flexy-linux-*
+bin/
 nCAT
 *.log
 .DS_Store
