@@ -31,6 +31,7 @@ type Config struct {
 	LogLevel         string
 	ChkVFOMode       string
 	Metering         bool
+	LogPings         bool
 	UDPPort          int
 }
 
@@ -51,6 +52,7 @@ func init() {
 	flag.StringVar(&cfg.LogLevel, "log-level", "info", "minimum level of messages to log to console")
 	flag.StringVar(&cfg.ChkVFOMode, "chkvfo-mode", "new", "chkvfo syntax (old,new)")
 	flag.BoolVar(&cfg.Metering, "metering", true, "support reading meters from radio")
+	flag.BoolVar(&cfg.LogPings, "log-pings", false, "include ping/pong lines in proxy debug logs")
 }
 
 var fc *flexclient.FlexClient

@@ -5,6 +5,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	log "github.com/rs/zerolog/log"
 )
 
 // ProxyClient represents a single SmartSDR TCP client connection proxied
@@ -90,6 +92,8 @@ func (rc *RadioContext) RewriteDiscoveryIPs(kv map[string]string) {
 	handles := strings.Split(handlesStr, ",")
 	ips := strings.Split(ipsStr, ",")
 	if len(handles) != len(ips) {
+		log.Warn().Str("ctx", "proxy").Str("handles", handlesStr).Str("ips", ipsStr).
+			Msg("Discovery rewrite: handles/ips length mismatch")
 		return // malformed, leave untouched
 	}
 
@@ -104,9 +108,16 @@ func (rc *RadioContext) RewriteDiscoveryIPs(kv map[string]string) {
 		if c, ok := rc.Clients[key]; ok && c.RemoteIP != nil {
 			newIP := c.RemoteIP.String()
 			if ips[i] != newIP {
+				log.Debug().Str("ctx", "proxy").Str("handle", key).
+					Str("old_ip", ips[i]).Str("new_ip", newIP).
+					Msg("Discovery rewrite: gui_client_ips")
 				ips[i] = newIP
 				changed = true
 			}
+		} else {
+			log.Debug().Str("ctx", "proxy").Str("handle", key).
+				Bool("in_map", ok).Str("ip", ips[i]).
+				Msg("Discovery rewrite: handle not in proxy client map")
 		}
 	}
 	if changed {

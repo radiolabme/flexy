@@ -318,6 +318,7 @@ func startDiscoveryRelay(ctx context.Context, proxyIP string) {
 
 	log.Info().Str("ctx", "proxy").Str("proto", "UDP").Str("proxy_ip", proxyIP).Msg("Discovery relay active")
 
+	logged := false
 	buf := make([]byte, 65536)
 	for {
 		n, addr, err := recvConn.ReadFrom(buf)
@@ -337,6 +338,17 @@ func startDiscoveryRelay(ctx context.Context, proxyIP string) {
 		if len(kv) == 0 {
 			continue
 		}
+
+		// Log full discovery fields once on first packet from radio.
+		if !logged {
+			logged = true
+			ev := log.Info().Str("ctx", "proxy").Int("fields", len(kv))
+			for k, v := range kv {
+				ev = ev.Str(k, v)
+			}
+			ev.Msg("Discovery relay: first packet from radio")
+		}
+
 		kv["ip"] = proxyIP
 		if nick := kv["nickname"]; nick != "" {
 			kv["nickname"] = nick + " [Flexy]"
@@ -347,6 +359,15 @@ func startDiscoveryRelay(ctx context.Context, proxyIP string) {
 		// correct station to bind to.
 		if rc := getRadioContext(); rc != nil {
 			rc.RewriteDiscoveryIPs(kv)
+		}
+
+		if log.Debug().Enabled() {
+			if h, ok := kv["gui_client_handles"]; ok {
+				log.Debug().Str("ctx", "proxy").
+					Str("gui_client_handles", h).
+					Str("gui_client_ips", kv["gui_client_ips"]).
+					Msg("Discovery relay: client fields after rewrite")
+			}
 		}
 
 		pkt := buildDiscoveryPacket(kv)
@@ -550,7 +571,7 @@ func handleSmartSDRClient(clientConn net.Conn) {
 		scanner := bufio.NewScanner(clientConn)
 		for scanner.Scan() {
 			line := scanner.Text()
-			if !pingLineRe.MatchString(line) {
+			if cfg.LogPings || !pingLineRe.MatchString(line) {
 				log.Debug().Str("ctx", "proxy").Str("proto", "TCP").Str("dir", "→").Str("line", line).Msg("proxy cmd")
 			}
 			if emptyBindRe.MatchString(line) {
@@ -656,7 +677,7 @@ func handleSmartSDRClient(clientConn net.Conn) {
 			}
 		}
 
-		if !pingLineRe.MatchString(line) {
+		if cfg.LogPings || !pingLineRe.MatchString(line) {
 			log.Debug().Str("ctx", "proxy").Str("proto", "TCP").Str("dir", "←").Str("line", line).Msg("proxy resp")
 		}
 		if _, err := fmt.Fprintf(clientConn, "%s\n", line); err != nil {

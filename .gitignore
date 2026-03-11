@@ -2,3 +2,4 @@ flexy
 flexy-linux-*
 nCAT
 *.log
+.DS_Store
