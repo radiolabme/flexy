@@ -12,8 +12,11 @@ import (
 	"time"
 
 	"github.com/kc2g-flex-tools/flexclient"
+	"github.com/mattn/go-isatty"
 	"github.com/rs/zerolog"
 	log "github.com/rs/zerolog/log"
+
+	"github.com/radiolabme/flexy/internal/config"
 )
 
 type Config struct {
@@ -55,6 +58,64 @@ func init() {
 	flag.BoolVar(&cfg.Metering, "metering", true, "support reading meters from radio")
 	flag.BoolVar(&cfg.LogPings, "log-pings", false, "include ping/pong lines in proxy debug logs")
 	flag.BoolVar(&cfg.ProxyOnly, "proxy-only", false, "run only the proxy/web UI; skip flexclient radio connection")
+
+	flag.Bool("setup", false, "run interactive setup wizard")
+}
+
+// applyConfigFile applies values from the XDG config file for any CLI flags
+// that were not explicitly set on the command line.
+func applyConfigFile(c config.Config) {
+	set := make(map[string]bool)
+	flag.Visit(func(f *flag.Flag) { set[f.Name] = true })
+
+	if !set["radio"] && c.Radio != "" {
+		cfg.RadioIP = c.Radio
+	}
+	if !set["station"] && c.Station != "" {
+		cfg.Station = c.Station
+	}
+	if !set["slice"] && c.Slice != "" {
+		cfg.Slice = c.Slice
+	}
+	if !set["listen"] && c.Listen != "" {
+		cfg.Listen = c.Listen
+	}
+	if !set["web"] && c.Web != "" {
+		cfg.WebListen = c.Web
+	}
+	if !set["proxy"] && c.Proxy != "" {
+		cfg.ProxyListen = c.Proxy
+	}
+	if !set["proxy-ip"] && c.ProxyIP != "" {
+		cfg.ProxyIP = c.ProxyIP
+	}
+	if !set["radio-bind-ip"] && c.RadioBindIP != "" {
+		cfg.RadioBindIP = c.RadioBindIP
+	}
+	if !set["profile"] && c.Profile != "" {
+		cfg.Profile = c.Profile
+	}
+	if !set["log-level"] && c.LogLevel != "" {
+		cfg.LogLevel = c.LogLevel
+	}
+	if !set["chkvfo-mode"] && c.ChkVFOMode != "" {
+		cfg.ChkVFOMode = c.ChkVFOMode
+	}
+	if !set["metering"] && c.Metering != nil {
+		cfg.Metering = *c.Metering
+	}
+	if !set["headless"] && c.Headless {
+		cfg.Headless = true
+	}
+	if !set["log-pings"] && c.LogPings {
+		cfg.LogPings = true
+	}
+	if !set["proxy-only"] && c.ProxyOnly {
+		cfg.ProxyOnly = true
+	}
+	if !set["udp-port"] && c.UDPPort != 0 {
+		cfg.UDPPort = c.UDPPort
+	}
 }
 
 var fc *flexclient.FlexClient
@@ -164,12 +225,31 @@ func findSlice(ctx context.Context) error {
 func runRadio(ctx context.Context) error {
 	setConnState(ConnStateConnecting, nil)
 
-	var err error
-	fc, err = flexclient.NewFlexClient(cfg.RadioIP)
-	if err != nil {
-		setConnState(ConnStateError, err)
-		return err
+	// NewFlexClient blocks forever during discovery when no radio is reachable.
+	// Run it in a goroutine so ctx cancellation can interrupt us.
+	type connResult struct {
+		fc  *flexclient.FlexClient
+		err error
 	}
+	ch := make(chan connResult, 1)
+	go func() {
+		client, err := flexclient.NewFlexClient(cfg.RadioIP)
+		ch <- connResult{client, err}
+	}()
+
+	select {
+	case <-ctx.Done():
+		setConnState(ConnStateDisconnected, nil)
+		return ctx.Err()
+	case res := <-ch:
+		if res.err != nil {
+			setConnState(ConnStateError, res.err)
+			return res.err
+		}
+		fc = res.fc
+	}
+
+	var err error
 
 	// runCtx is cancelled when fc.Run() exits or when ctx is cancelled.
 	runCtx, runCancel := context.WithCancel(ctx)
@@ -252,6 +332,21 @@ func main() {
 
 	flag.Parse()
 
+	// --setup: run wizard and exit.
+	if f := flag.Lookup("setup"); f != nil && f.Value.String() == "true" {
+		if runSetup() {
+			os.Exit(0)
+		}
+		os.Exit(1)
+	}
+
+	// Load XDG config, then overlay any explicitly-set CLI flags.
+	fileCfg, err := config.Load()
+	if err != nil {
+		log.Warn().Err(err).Msg("Failed to load config file; using defaults")
+	}
+	applyConfigFile(fileCfg)
+
 	logLevel, err := zerolog.ParseLevel(cfg.LogLevel)
 	if err != nil {
 		log.Fatal().Str("level", cfg.LogLevel).Msg("Unknown log level")
@@ -260,6 +355,18 @@ func main() {
 
 	if cfg.Profile != "" && !cfg.Headless {
 		log.Fatal().Msg("-profile doesn't make sense without -headless")
+	}
+
+	// Interactive TUI: if we're on a TTY, discovering, and not headless.
+	interactive := !cfg.Headless && cfg.RadioIP == ":discover:" && isatty.IsTerminal(os.Stdin.Fd())
+	if interactive {
+		if radio := runTUI(); radio != nil {
+			cfg.RadioIP = radio.IP
+			log.Info().Str("radio", cfg.RadioIP).Str("nickname", radio.Nickname).Msg("Radio selected")
+		} else {
+			log.Info().Msg("No radio selected, exiting")
+			os.Exit(0)
+		}
 	}
 
 	rootCtx, rootCancel := context.WithCancel(context.Background())
