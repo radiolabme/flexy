@@ -121,6 +121,9 @@ func runSetup() bool {
 
 	// Hamlib listen
 	catHost, catPort := splitHostPort(c.Listen)
+	if catPort == "" {
+		catPort = "4532"
+	}
 	catOpts, catIPSel := listenIPOptions(catHost)
 	customCatIP := ""
 	if catIPSel == proxyIPOther {
@@ -129,6 +132,9 @@ func runSetup() bool {
 
 	// Web UI listen
 	webHost, webPort := splitHostPort(c.Web)
+	if webPort == "" {
+		webPort = "8080"
+	}
 	webOpts, webIPSel := listenIPOptions(webHost)
 	customWebIP := ""
 	if webIPSel == proxyIPOther {
@@ -137,6 +143,9 @@ func runSetup() bool {
 
 	// Proxy listen
 	proxyHost, proxyPort := splitHostPort(c.Proxy)
+	if proxyPort == "" {
+		proxyPort = "4992"
+	}
 	proxyOpts, proxyIPSel := listenIPOptions(proxyHost)
 	customProxyIP := ""
 	if proxyIPSel == proxyIPOther {
