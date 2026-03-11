@@ -42,7 +42,7 @@ func main() {
 }
 
 func run() error {
-	listenAddr := flag.String("listen", ":4992", "UDP address to listen on")
+	listenAddr := flag.String("listen", ":4993", "UDP address to listen on")
 	allowFrom := flag.String("allow-from", "100.64.0.0/10", "CIDR of trusted source IPs (default: Tailscale CGNAT range)")
 	flag.Parse()
 

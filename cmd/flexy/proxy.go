@@ -26,6 +26,8 @@ const (
 	flexOUI            = uint32(0x001c2d)
 	discoveryClassCode = uint16(0xffff)
 	smartsdrTCPPort    = "4992"
+	discoveryPort      = 4992
+	discoveryRelayPort = 4993 // unicast to flexy-discovery peers (avoids 4992 conflict with SmartSDR)
 
 	natKeepaliveInterval = 25 * time.Second
 	cleanupWriteDeadline = 2 * time.Second
@@ -370,13 +372,13 @@ func startDiscoveryRelay(ctx context.Context, proxyIP string) {
 		}
 
 		for _, bcastIP := range bcastAddrs {
-			if _, err := sendConn.WriteTo(pkt, &net.UDPAddr{IP: bcastIP, Port: 4992}); err != nil {
+			if _, err := sendConn.WriteTo(pkt, &net.UDPAddr{IP: bcastIP, Port: discoveryPort}); err != nil {
 				log.Debug().Err(err).Str("broadcast", bcastIP.String()).Msg("Discovery relay: broadcast failed")
 			}
 		}
 		for _, peer := range peers {
 			for _, peerIP := range peer.IPs {
-				if _, err := sendConn.WriteTo(pkt, &net.UDPAddr{IP: peerIP, Port: 4992}); err != nil {
+				if _, err := sendConn.WriteTo(pkt, &net.UDPAddr{IP: peerIP, Port: discoveryRelayPort}); err != nil {
 					log.Debug().Err(err).Str("peer", peerIP.String()).Msg("Discovery relay: unicast failed")
 				}
 			}
