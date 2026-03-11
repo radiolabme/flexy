@@ -161,6 +161,11 @@ func runSetup() bool {
 		c.LogLevel = "info"
 	}
 
+	headlessStr := "interactive"
+	if c.Headless {
+		headlessStr = "headless"
+	}
+
 	err := huh.NewForm(
 		huh.NewGroup(
 			huh.NewInput().
@@ -280,10 +285,14 @@ func runSetup() bool {
 				).
 				Value(&c.LogLevel),
 
-			huh.NewConfirm().
-				Title("Headless mode").
-				Description("Run without interactive TUI").
-				Value(&c.Headless),
+			huh.NewSelect[string]().
+				Title("Startup mode").
+				Description("Interactive shows the TUI; headless runs as a background service").
+				Options(
+					huh.NewOption("Interactive (TUI)", "interactive"),
+					huh.NewOption("Headless (background/service)", "headless"),
+				).
+				Value(&headlessStr),
 		).Title("Advanced"),
 	).Run()
 
@@ -335,6 +344,8 @@ func runSetup() bool {
 	} else {
 		c.UDPPort = 0
 	}
+
+	c.Headless = headlessStr == "headless"
 
 	c.Version = config.CurrentVersion
 

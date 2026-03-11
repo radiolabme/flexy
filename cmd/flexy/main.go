@@ -362,6 +362,20 @@ func main() {
 	}
 	zerolog.SetGlobalLevel(logLevel)
 
+	log.Info().
+		Str("radio", cfg.RadioIP).
+		Str("station", cfg.Station).
+		Str("slice", cfg.Slice).
+		Str("listen", cfg.Listen).
+		Str("web", cfg.WebListen).
+		Str("proxy", cfg.ProxyListen).
+		Str("proxy_ip", cfg.ProxyIP).
+		Int("udp_port", cfg.UDPPort).
+		Str("log_level", cfg.LogLevel).
+		Bool("headless", cfg.Headless).
+		Bool("metering", cfg.Metering).
+		Msg("Active configuration")
+
 	if cfg.Profile != "" && !cfg.Headless {
 		log.Fatal().Msg("-profile doesn't make sense without -headless")
 	}
