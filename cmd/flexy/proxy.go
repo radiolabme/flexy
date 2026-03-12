@@ -27,7 +27,6 @@ const (
 	discoveryClassCode = uint16(0xffff)
 	smartsdrTCPPort    = "4992"
 	discoveryPort      = 4992
-	discoveryRelayPort = 4993 // unicast to flexy-discovery peers (avoids 4992 conflict with SmartSDR)
 
 	natKeepaliveInterval = 25 * time.Second
 	cleanupWriteDeadline = 2 * time.Second
@@ -263,10 +262,9 @@ func tailscaleStatusPeers() []tailscalePeer {
 }
 
 // startDiscoveryRelay listens for VITA-49 discovery broadcasts from the radio,
-// rewrites the radio's IP to the proxy IP, and re-broadcasts to all LAN
-// interfaces and unicasts to all online Tailscale peers. This preserves every
-// field in the radio's original packet (including gui_client_handles etc.)
-// so that SmartSDR DAX/CAT can discover connected stations.
+// rewrites the radio's IP and port to point at the proxy, strips gui_client_*
+// fields (forcing companions to use TCP subscription data instead), and forwards
+// the packet to all LAN broadcasts and online Tailscale peers on port 4992.
 func startDiscoveryRelay(ctx context.Context, proxyIP string) {
 	recvConn, err := discoveryListenReusePort()
 	if err != nil {
@@ -321,6 +319,9 @@ func startDiscoveryRelay(ctx context.Context, proxyIP string) {
 		}
 
 		kv["ip"] = proxyIP
+		if _, port, err := net.SplitHostPort(cfg.ProxyListen); err == nil && port != "" {
+			kv["port"] = port
+		}
 		if nick := kv["nickname"]; nick != "" {
 			kv["nickname"] = nick + " [Flexy]"
 		}
@@ -378,7 +379,7 @@ func startDiscoveryRelay(ctx context.Context, proxyIP string) {
 		}
 		for _, peer := range peers {
 			for _, peerIP := range peer.IPs {
-				if _, err := sendConn.WriteTo(pkt, &net.UDPAddr{IP: peerIP, Port: discoveryRelayPort}); err != nil {
+				if _, err := sendConn.WriteTo(pkt, &net.UDPAddr{IP: peerIP, Port: discoveryPort}); err != nil {
 					log.Debug().Err(err).Str("peer", peerIP.String()).Msg("Discovery relay: unicast failed")
 				}
 			}

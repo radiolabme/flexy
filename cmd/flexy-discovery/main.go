@@ -1,6 +1,11 @@
-// flexy-discovery receives unicast SmartSDR discovery packets (e.g. from a
-// Flexy proxy over Tailscale) and re-broadcasts them on the local network so
-// that SmartSDR, Smart CAT, and Smart DAX can discover the radio.
+// flexy-discovery receives SmartSDR discovery packets (e.g. from a Flexy proxy
+// over Tailscale) and re-broadcasts them on the local network so that SmartSDR,
+// Smart CAT, and Smart DAX can discover the radio.
+//
+// When SmartSDR runs on the same machine as the Tailscale node, flexy-discovery
+// is NOT needed — the proxy sends discovery unicasts directly to port 4992 which
+// SmartSDR already listens on.  Use flexy-discovery only when SmartSDR runs on a
+// DIFFERENT machine on the same LAN as the Tailscale node.
 //
 // Future: add -auth-key flag for HMAC verification of incoming packets.
 package main
@@ -78,7 +83,7 @@ func lanBroadcastAddrs() []net.IP {
 }
 
 func run() error {
-	listenAddr := flag.String("listen", ":4993", "UDP address to listen on")
+	listenAddr := flag.String("listen", ":4992", "UDP address to listen on")
 	allowFrom := flag.String("allow-from", "100.64.0.0/10", "CIDR of trusted source IPs (default: Tailscale CGNAT range)")
 	logLevel := flag.String("log-level", "info", "minimum log level (debug, info, warn, error)")
 	flag.Parse()

@@ -148,13 +148,14 @@ h1 { font-size: 1.4rem; color: var(--accent); letter-spacing: 0.1em; flex-shrink
 }
 
 /* Connections grid */
-.conn-grid {
+.conn-grid-top {
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-columns: 1fr 1fr;
   gap: 1rem;
+  margin-bottom: 1rem;
 }
-@media (max-width: 800px) { .conn-grid { grid-template-columns: 1fr; } }
-.conn-grid h3 {
+@media (max-width: 800px) { .conn-grid-top { grid-template-columns: 1fr; } }
+.conn-grid-top h3, .conn-full h3 {
   font-size: 0.65rem;
   text-transform: uppercase;
   letter-spacing: 0.1em;
@@ -371,7 +372,7 @@ button:active { opacity: 0.7; }
 <div class="section-full">
   <div class="card">
     <h2>Connections</h2>
-    <div class="conn-grid">
+    <div class="conn-grid-top">
 
       <!-- Column 1: Flexy <-> Radio -->
       <div>
@@ -389,14 +390,14 @@ button:active { opacity: 0.7; }
         </div>
       </div>
 
-      <!-- Column 3: SmartSDR Proxy clients -->
-      <div>
-        <h3>SmartSDR proxy clients</h3>
-        <div id="proxy-conn-section">
-          <span class="tag-muted" style="font-size:0.85em">Loading&hellip;</span>
-        </div>
-      </div>
+    </div>
 
+    <!-- Full-width: SmartSDR Proxy clients -->
+    <div class="conn-full">
+      <h3>SmartSDR proxy clients</h3>
+      <div id="proxy-conn-section">
+        <span class="tag-muted" style="font-size:0.85em">Loading&hellip;</span>
+      </div>
     </div>
   </div>
 </div>
