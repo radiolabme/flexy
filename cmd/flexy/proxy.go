@@ -404,8 +404,10 @@ var (
 )
 
 // startUDPRelay opens a local UDP port bound to bindIP (nil = all interfaces),
-// forwards received packets to destIP:destPort, and closes when done is closed.
-// Returns the local port, a packet counter, and any error.
+// and bidirectionally relays VITA-49 packets between the radio and a remote
+// client at destIP:destPort. Packets from the radio are forwarded to the
+// client; packets from the client are forwarded to the radio. Closes when
+// done is closed. Returns the local port, a packet counter, and any error.
 func startUDPRelay(bindIP net.IP, destIP string, destPort int, done <-chan struct{}) (int, *UDPRelayCounter, error) {
 	localConn, err := net.ListenUDP("udp", &net.UDPAddr{IP: bindIP, Port: 0})
 	if err != nil {
@@ -413,7 +415,8 @@ func startUDPRelay(bindIP net.IP, destIP string, destPort int, done <-chan struc
 	}
 
 	localPort := localConn.LocalAddr().(*net.UDPAddr).Port //nolint:errcheck
-	destAddr := &net.UDPAddr{IP: net.ParseIP(destIP), Port: destPort}
+	clientAddr := &net.UDPAddr{IP: net.ParseIP(destIP), Port: destPort}
+	radioIP := net.ParseIP(cfg.RadioIP)
 	counter := &UDPRelayCounter{
 		ClientAddr: fmt.Sprintf("%s:%d", destIP, destPort),
 		RelayPort:  localPort,
@@ -421,7 +424,7 @@ func startUDPRelay(bindIP net.IP, destIP string, destPort int, done <-chan struc
 
 	// Punch a hole in any intermediate NAT by sending a keepalive to the
 	// radio's VITA-49 port so the radio can send UDP back through NAT.
-	if radioIP := net.ParseIP(cfg.RadioIP); radioIP != nil {
+	if radioIP != nil {
 		radioVITAAddr := &net.UDPAddr{IP: radioIP, Port: 4991}
 		localConn.WriteTo([]byte{0}, radioVITAAddr)
 		go func() {
@@ -442,14 +445,33 @@ func startUDPRelay(bindIP net.IP, destIP string, destPort int, done <-chan struc
 		defer localConn.Close()
 		buf := make([]byte, 65536)
 		for {
-			n, _, err := localConn.ReadFrom(buf)
+			n, src, err := localConn.ReadFromUDP(buf)
 			if err != nil {
 				return
 			}
-			localConn.WriteTo(buf[:n], destAddr)
-			counter.record()
-			if counter.packetsRx.Load() == 1 {
-				log.Info().Str("ctx", "proxy").Str("proto", "UDP").Str("dir", "→").Str("dest", destAddr.String()).Msg("UDP relay: packets flowing")
+
+			if src.IP.Equal(clientAddr.IP) && src.Port == clientAddr.Port {
+				// Client → radio: forward to radio's VITA-49 port.
+				if radioIP != nil {
+					if _, err := localConn.WriteToUDP(buf[:n], &net.UDPAddr{IP: radioIP, Port: 4991}); err != nil {
+						log.Debug().Err(err).Str("ctx", "proxy").Msg("UDP relay: client→radio write failed")
+					}
+				}
+				log.Debug().Str("ctx", "proxy").Str("proto", "UDP").
+					Str("dir", "→radio").Str("src", src.String()).
+					Int("bytes", n).Msg("UDP relay")
+			} else {
+				// Radio → client: forward to client.
+				if _, err := localConn.WriteToUDP(buf[:n], clientAddr); err != nil {
+					log.Debug().Err(err).Str("ctx", "proxy").Msg("UDP relay: radio→client write failed")
+				}
+				counter.record()
+				if counter.packetsRx.Load() == 1 {
+					log.Info().Str("ctx", "proxy").Str("proto", "UDP").
+						Str("dir", "→client").Str("dest", clientAddr.String()).
+						Str("radio_src", src.String()).
+						Msg("UDP relay: packets flowing")
+				}
 			}
 		}
 	}()
