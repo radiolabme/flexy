@@ -3,3 +3,5 @@ cmd/flexy/web/downloads/
 nCAT
 *.log
 .DS_Store
+flexy-discovery
+flexy-discovery.exe

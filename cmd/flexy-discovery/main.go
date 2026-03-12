@@ -41,6 +41,42 @@ func main() {
 	}
 }
 
+// lanBroadcastAddrs returns the directed broadcast address for every non-loopback
+// IPv4 interface that is up.
+func lanBroadcastAddrs() []net.IP {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil
+	}
+	var out []net.IP
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 || iface.Flags&net.FlagBroadcast == 0 {
+			continue
+		}
+		addrs, _ := iface.Addrs()
+		for _, addr := range addrs {
+			ipNet, ok := addr.(*net.IPNet)
+			if !ok {
+				continue
+			}
+			ip4 := ipNet.IP.To4()
+			if ip4 == nil {
+				continue
+			}
+			mask := ipNet.Mask
+			if len(mask) != 4 {
+				continue
+			}
+			bcast := make(net.IP, 4)
+			for i := range bcast {
+				bcast[i] = ip4[i] | ^mask[i]
+			}
+			out = append(out, bcast)
+		}
+	}
+	return out
+}
+
 func run() error {
 	listenAddr := flag.String("listen", ":4993", "UDP address to listen on")
 	allowFrom := flag.String("allow-from", "100.64.0.0/10", "CIDR of trusted source IPs (default: Tailscale CGNAT range)")
@@ -75,12 +111,25 @@ func run() error {
 	}
 	defer sendConn.Close()
 
-	bcastDest := &net.UDPAddr{IP: net.IPv4bcast, Port: 4992}
+	// Enable SO_BROADCAST so we can send to 255.255.255.255 and subnet broadcasts.
+	if err := setSockBroadcast(sendConn); err != nil {
+		return fmt.Errorf("set SO_BROADCAST: %w", err)
+	}
+
+	bcastAddrs := lanBroadcastAddrs()
+	if len(bcastAddrs) == 0 {
+		bcastAddrs = []net.IP{net.IPv4bcast}
+	}
+
+	var bcastStrs []string
+	for _, b := range bcastAddrs {
+		bcastStrs = append(bcastStrs, (&net.UDPAddr{IP: b, Port: 4992}).String())
+	}
 
 	log.Info().
 		Str("listen", *listenAddr).
 		Str("allow", *allowFrom).
-		Str("broadcast", bcastDest.String()).
+		Strs("broadcast", bcastStrs).
 		Str("log_level", *logLevel).
 		Msg("started")
 
@@ -116,13 +165,21 @@ func run() error {
 			continue
 		}
 
-		if _, err := sendConn.WriteToUDP(buf[:n], bcastDest); err != nil {
-			log.Error().Err(err).Str("src", src.String()).Int("bytes", n).Str("dest", bcastDest.String()).Msg("broadcast failed")
+		sent := false
+		for _, bcastIP := range bcastAddrs {
+			dest := &net.UDPAddr{IP: bcastIP, Port: 4992}
+			if _, err := sendConn.WriteToUDP(buf[:n], dest); err != nil {
+				log.Error().Err(err).Str("src", src.String()).Int("bytes", n).Str("dest", dest.String()).Msg("broadcast failed")
+			} else {
+				sent = true
+				log.Debug().Str("src", src.String()).Int("bytes", n).Str("dest", dest.String()).Msg("relayed")
+			}
+		}
+		if !sent {
 			continue
 		}
 
 		relayed++
-		log.Debug().Str("src", src.String()).Int("bytes", n).Str("dest", bcastDest.String()).Msg("relayed")
 		if relayed == 1 || relayed%100 == 0 {
 			log.Info().Uint64("relayed", relayed).Uint64("dropped", dropped).Msg("progress")
 		}
