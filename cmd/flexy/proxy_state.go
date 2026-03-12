@@ -12,11 +12,17 @@ type UDPRelayCounter struct {
 	ClientAddr string
 	RelayPort  int
 	packetsRx  atomic.Int64
+	packetsTx  atomic.Int64
 	lastPktNs  atomic.Int64
 }
 
-func (c *UDPRelayCounter) record() {
+func (c *UDPRelayCounter) recordRx() {
 	c.packetsRx.Add(1)
+	c.lastPktNs.Store(time.Now().UnixNano())
+}
+
+func (c *UDPRelayCounter) recordTx() {
+	c.packetsTx.Add(1)
 	c.lastPktNs.Store(time.Now().UnixNano())
 }
 
@@ -24,6 +30,7 @@ type UDPRelaySnapshot struct {
 	ClientAddr string     `json:"clientAddr"`
 	RelayPort  int        `json:"relayPort"`
 	PacketsRx  int64      `json:"packetsRx"`
+	PacketsTx  int64      `json:"packetsTx"`
 	LastPacket *time.Time `json:"lastPacket,omitempty"`
 }
 
@@ -33,6 +40,7 @@ func (c *UDPRelayCounter) snapshot() UDPRelaySnapshot {
 		ClientAddr: c.ClientAddr,
 		RelayPort:  c.RelayPort,
 		PacketsRx:  c.packetsRx.Load(),
+		PacketsTx:  c.packetsTx.Load(),
 	}
 	if ns != 0 {
 		t := time.Unix(0, ns)
@@ -46,6 +54,24 @@ type HamlibClientConn struct {
 	id          string
 	Addr        string
 	ConnectedAt time.Time
+}
+
+// TCPCounter tracks TCP line counts in each direction for a proxy client.
+type TCPCounter struct {
+	linesRx atomic.Int64 // radio → client
+	linesTx atomic.Int64 // client → radio
+}
+
+type TCPSnapshot struct {
+	LinesRx int64 `json:"linesRx"`
+	LinesTx int64 `json:"linesTx"`
+}
+
+func (c *TCPCounter) snapshot() TCPSnapshot {
+	return TCPSnapshot{
+		LinesRx: c.linesRx.Load(),
+		LinesTx: c.linesTx.Load(),
+	}
 }
 
 type HamlibClientSnapshot struct {

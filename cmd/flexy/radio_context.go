@@ -21,6 +21,7 @@ type ProxyClient struct {
 	ClientID    string // GUI UUID (from client status updates)
 	ConnectedAt time.Time
 	Relay       *UDPRelayCounter
+	TCP         TCPCounter
 
 	// Owned resources for cleanup on disconnect.
 	OwnedPans   map[string]struct{}
@@ -145,6 +146,7 @@ type ProxyClientSnapshot struct {
 	ClientID    string            `json:"clientId,omitempty"`
 	ConnectedAt time.Time         `json:"connectedAt"`
 	UDPRelay    *UDPRelaySnapshot `json:"udpRelay,omitempty"`
+	TCP         TCPSnapshot       `json:"tcp"`
 }
 
 type RadioContextSnapshot struct {
@@ -177,6 +179,7 @@ func (rc *RadioContext) Snapshot() RadioContextSnapshot {
 			Station:     c.Station,
 			ClientID:    c.ClientID,
 			ConnectedAt: c.ConnectedAt,
+			TCP:         c.TCP.snapshot(),
 		}
 		if c.Relay != nil {
 			rs := c.Relay.snapshot()

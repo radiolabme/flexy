@@ -391,7 +391,7 @@ button:active { opacity: 0.7; }
 
       <!-- Column 3: SmartSDR Proxy clients -->
       <div>
-        <h3>SmartSDR proxy TCP clients</h3>
+        <h3>SmartSDR proxy clients</h3>
         <div id="proxy-conn-section">
           <span class="tag-muted" style="font-size:0.85em">Loading&hellip;</span>
         </div>
@@ -776,15 +776,18 @@ function pollConnections() {
       if (proxyClients.length === 0) {
         proxyConnEl.innerHTML = '<span class="tag-muted" style="font-size:0.85em">No proxy connections</span>';
       } else {
-        let tbl = '<table><thead><tr><th>Client</th><th>Program</th><th>Station</th><th>UDP</th><th>Status</th></tr></thead><tbody>';
+        let tbl = '<table><thead><tr><th>Client</th><th>Program</th><th>Station</th><th>TCP RX</th><th>TCP TX</th><th>UDP RX</th><th>UDP TX</th><th>Status</th></tr></thead><tbody>';
         for (const c of proxyClients) {
           const relay = c.udpRelay;
-          const pkts  = relay ? (relay.packetsRx || 0) : 0;
+          const udpRx = relay ? (relay.packetsRx || 0) : 0;
+          const udpTx = relay ? (relay.packetsTx || 0) : 0;
+          const tcpRx = c.tcp ? (c.tcp.linesRx || 0) : 0;
+          const tcpTx = c.tcp ? (c.tcp.linesTx || 0) : 0;
           const last  = relay ? relay.lastPacket : null;
           let statusHtml;
           if (!relay) {
             statusHtml = '<span class="tag-muted">no relay</span>';
-          } else if (pkts === 0) {
+          } else if (udpRx === 0) {
             statusHtml = '<span class="tag-yellow">waiting</span>';
           } else {
             const ageMs = last ? (Date.now() - new Date(last).getTime()) : Infinity;
@@ -792,11 +795,15 @@ function pollConnections() {
               ? '<span class="tag-green">flowing</span>'
               : '<span class="tag-yellow">stalled</span>';
           }
+          const fmtNum = n => n > 0 ? n.toLocaleString() : '<span class="tag-muted">—</span>';
           tbl += `<tr>
             <td>${esc(c.remoteAddr)}</td>
             <td>${c.program ? esc(c.program) : '<span class="tag-muted">—</span>'}</td>
             <td>${c.station ? esc(c.station) : '<span class="tag-muted">—</span>'}</td>
-            <td>${pkts > 0 ? pkts.toLocaleString() : '<span class="tag-muted">—</span>'}</td>
+            <td>${fmtNum(tcpRx)}</td>
+            <td>${fmtNum(tcpTx)}</td>
+            <td>${fmtNum(udpRx)}</td>
+            <td>${fmtNum(udpTx)}</td>
             <td>${statusHtml}</td>
           </tr>`;
         }

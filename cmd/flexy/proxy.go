@@ -457,6 +457,7 @@ func startUDPRelay(bindIP net.IP, destIP string, destPort int, done <-chan struc
 						log.Debug().Err(err).Str("ctx", "proxy").Msg("UDP relay: client→radio write failed")
 					}
 				}
+				counter.recordTx()
 				log.Debug().Str("ctx", "proxy").Str("proto", "UDP").
 					Str("dir", "→radio").Str("src", src.String()).
 					Int("bytes", n).Msg("UDP relay")
@@ -465,7 +466,7 @@ func startUDPRelay(bindIP net.IP, destIP string, destPort int, done <-chan struc
 				if _, err := localConn.WriteToUDP(buf[:n], clientAddr); err != nil {
 					log.Debug().Err(err).Str("ctx", "proxy").Msg("UDP relay: radio→client write failed")
 				}
-				counter.record()
+				counter.recordRx()
 				if counter.packetsRx.Load() == 1 {
 					log.Info().Str("ctx", "proxy").Str("proto", "UDP").
 						Str("dir", "→client").Str("dest", clientAddr.String()).
@@ -609,6 +610,7 @@ func handleSmartSDRClient(clientConn net.Conn) {
 			if _, err := fmt.Fprintf(radioConn, "%s\n", line); err != nil {
 				return
 			}
+			pc.TCP.linesTx.Add(1)
 		}
 		radioConn.SetReadDeadline(time.Now())
 	}()
@@ -679,6 +681,7 @@ func handleSmartSDRClient(clientConn net.Conn) {
 		if _, err := fmt.Fprintf(clientConn, "%s\n", line); err != nil {
 			break
 		}
+		pc.TCP.linesRx.Add(1)
 	}
 
 	log.Info().Str("ctx", "proxy").Str("proto", "TCP").Str("client", clientAddr.String()).Msg("SmartSDR client disconnected")
