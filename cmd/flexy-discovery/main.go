@@ -44,7 +44,14 @@ func main() {
 func run() error {
 	listenAddr := flag.String("listen", ":4993", "UDP address to listen on")
 	allowFrom := flag.String("allow-from", "100.64.0.0/10", "CIDR of trusted source IPs (default: Tailscale CGNAT range)")
+	logLevel := flag.String("log-level", "info", "minimum log level (debug, info, warn, error)")
 	flag.Parse()
+
+	lvl, err := zerolog.ParseLevel(*logLevel)
+	if err != nil {
+		return fmt.Errorf("bad -log-level %q: %w", *logLevel, err)
+	}
+	zerolog.SetGlobalLevel(lvl)
 
 	_, allowNet, err := net.ParseCIDR(*allowFrom)
 	if err != nil {
@@ -70,7 +77,12 @@ func run() error {
 
 	bcastDest := &net.UDPAddr{IP: net.IPv4bcast, Port: 4992}
 
-	log.Info().Str("listen", *listenAddr).Str("allow", *allowFrom).Msg("started")
+	log.Info().
+		Str("listen", *listenAddr).
+		Str("allow", *allowFrom).
+		Str("broadcast", bcastDest.String()).
+		Str("log_level", *logLevel).
+		Msg("started")
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt)
@@ -94,20 +106,23 @@ func run() error {
 
 		if !allowNet.Contains(src.IP) {
 			dropped++
+			log.Debug().Str("src", src.String()).Int("bytes", n).Msg("dropped: source outside allow range")
 			continue
 		}
 
 		if n < 28 {
 			dropped++
+			log.Debug().Str("src", src.String()).Int("bytes", n).Msg("dropped: packet too small")
 			continue
 		}
 
 		if _, err := sendConn.WriteToUDP(buf[:n], bcastDest); err != nil {
-			log.Error().Err(err).Msg("broadcast failed")
+			log.Error().Err(err).Str("src", src.String()).Int("bytes", n).Str("dest", bcastDest.String()).Msg("broadcast failed")
 			continue
 		}
 
 		relayed++
+		log.Debug().Str("src", src.String()).Int("bytes", n).Str("dest", bcastDest.String()).Msg("relayed")
 		if relayed == 1 || relayed%100 == 0 {
 			log.Info().Uint64("relayed", relayed).Uint64("dropped", dropped).Msg("progress")
 		}
